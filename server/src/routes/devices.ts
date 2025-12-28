@@ -658,7 +658,7 @@ router.post("/:sn/charging-power", async (req: Request, res: Response) => {
 });
 
 // Get device history for charts
-type ChartPeriod = "10m" | "1h" | "24h" | "7d" | "30d";
+type ChartPeriod = "10m" | "1h" | "24h" | "7d" | "30d" | "custom";
 
 function calculateTimeRange(period: ChartPeriod): {
   from: string;
