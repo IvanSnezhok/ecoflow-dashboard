@@ -78,13 +78,18 @@ export default function ErrorHistory() {
     fetchErrors()
   }, [serialNumber])
 
-  // Filter errors by type
-  const filteredErrors = filterType === 'all'
-    ? errors
-    : errors.filter((e) => e.errorType === filterType)
+  // Status codes to hide (charging status, not actual errors)
+  const HIDDEN_STATUS_CODES = [5, 6, 23]
 
-  // Get unique error types for filter dropdown
-  const uniqueTypes = Array.from(new Set(errors.map((e) => e.errorType)))
+  // Filter out hidden status codes first, then apply type filter
+  const visibleErrors = errors.filter((e) => !HIDDEN_STATUS_CODES.includes(e.errorCode))
+
+  const filteredErrors = filterType === 'all'
+    ? visibleErrors
+    : visibleErrors.filter((e) => e.errorType === filterType)
+
+  // Get unique error types for filter dropdown (from visible errors only)
+  const uniqueTypes = Array.from(new Set(visibleErrors.map((e) => e.errorType)))
 
   if (!device) {
     return (
@@ -132,10 +137,10 @@ export default function ErrorHistory() {
             onChange={(e) => setFilterType(e.target.value as ErrorType | 'all')}
             className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            <option value="all">All Types ({errors.length})</option>
+            <option value="all">All Types ({visibleErrors.length})</option>
             {uniqueTypes.map((type) => (
               <option key={type} value={type}>
-                {ERROR_TYPE_LABELS[type]} ({errors.filter((e) => e.errorType === type).length})
+                {ERROR_TYPE_LABELS[type]} ({visibleErrors.filter((e) => e.errorType === type).length})
               </option>
             ))}
           </select>
@@ -265,9 +270,9 @@ export default function ErrorHistory() {
       </div>
 
       {/* Summary */}
-      {!isLoading && !error && errors.length > 0 && (
+      {!isLoading && !error && visibleErrors.length > 0 && (
         <div className="text-sm text-muted-foreground text-center">
-          Showing {filteredErrors.length} of {errors.length} events
+          Showing {filteredErrors.length} of {visibleErrors.length} events
         </div>
       )}
     </div>
