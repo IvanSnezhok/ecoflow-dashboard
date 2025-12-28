@@ -3,12 +3,15 @@
  * Maps error codes to detailed descriptions, causes, solutions, and helpful links
  */
 
+export type ErrorSeverity = 'error' | 'warning' | 'info';
+
 export interface ErrorCodeInfo {
   code: number | string;
   title: string;
   description: string;
   causes: string[];
   solutions: string[];
+  severity?: ErrorSeverity; // 'error' by default, 'info' for status messages
   youtubeUrl?: string;
   docsUrl?: string;
 }
@@ -90,6 +93,7 @@ const BMS_ERRORS: Record<number, ErrorCodeInfo> = {
       "No action needed - this is normal operation",
       "You can disconnect the charger or continue using the device",
     ],
+    severity: 'info',
     docsUrl: "https://www.ecoflow.com/support",
   },
   23: {
@@ -103,6 +107,7 @@ const BMS_ERRORS: Record<number, ErrorCodeInfo> = {
       "No action needed - this is normal operation",
       "To charge higher, increase the Max Charge SOC in device settings",
     ],
+    severity: 'info',
     docsUrl: "https://www.ecoflow.com/support",
   },
   77: {

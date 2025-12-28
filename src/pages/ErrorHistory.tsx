@@ -6,6 +6,8 @@ import {
   Loader2,
   RefreshCw,
   Filter,
+  CheckCircle,
+  Info,
 } from 'lucide-react'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { api } from '@/services/api'
@@ -113,10 +115,10 @@ export default function ErrorHistory() {
         </Link>
         <div className="flex-1">
           <h2 className="text-2xl font-bold tracking-tight">
-            Error History: {device.name || device.serialNumber}
+            Event History: {device.name || device.serialNumber}
           </h2>
           <p className="text-muted-foreground">
-            {device.deviceType} • All recorded errors
+            {device.deviceType} • Errors and status events
           </p>
         </div>
       </div>
@@ -176,11 +178,11 @@ export default function ErrorHistory() {
             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mb-4">
               <AlertTriangle className="w-8 h-8 text-green-500" />
             </div>
-            <p className="text-lg font-medium">No Errors Found</p>
+            <p className="text-lg font-medium">No Events Found</p>
             <p className="text-sm text-muted-foreground mt-1">
               {filterType === 'all'
-                ? 'No errors have been recorded for this device.'
-                : `No ${ERROR_TYPE_LABELS[filterType]} errors found.`}
+                ? 'No events have been recorded for this device.'
+                : `No ${ERROR_TYPE_LABELS[filterType]} events found.`}
             </p>
           </div>
         ) : (
@@ -206,22 +208,38 @@ export default function ErrorHistory() {
                 {filteredErrors.map((err, index) => {
                   const tooltipType = ERROR_TYPE_TO_TOOLTIP[err.errorType]
                   const errorInfo = getErrorInfo(tooltipType, err.errorCode)
+                  const isInfo = errorInfo.severity === 'info'
+                  const isWarning = errorInfo.severity === 'warning'
                   return (
                     <tr
                       key={`${err.timestamp}-${err.errorType}-${err.errorCode}-${index}`}
-                      className="border-b last:border-b-0 hover:bg-muted/20 transition-colors"
+                      className={cn(
+                        "border-b last:border-b-0 hover:bg-muted/20 transition-colors",
+                        isInfo && "bg-green-500/5"
+                      )}
                     >
                       <td className="px-4 py-3 text-sm font-mono">
-                        {new Date(err.timestamp).toLocaleString()}
+                        <div className="flex items-center gap-2">
+                          {isInfo ? (
+                            <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                          ) : isWarning ? (
+                            <Info className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+                          ) : (
+                            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                          )}
+                          {new Date(err.timestamp).toLocaleString()}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <span
                           className={cn(
                             "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium",
-                            ERROR_TYPE_COLORS[err.errorType]
+                            isInfo
+                              ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                              : ERROR_TYPE_COLORS[err.errorType]
                           )}
                         >
-                          {ERROR_TYPE_LABELS[err.errorType]}
+                          {isInfo ? 'Status' : ERROR_TYPE_LABELS[err.errorType]}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm font-mono font-bold">
@@ -229,7 +247,10 @@ export default function ErrorHistory() {
                       </td>
                       <td className="px-4 py-3 text-sm">
                         <ErrorTooltip errorCode={err.errorCode} errorType={tooltipType}>
-                          <span className="cursor-help underline underline-offset-2 decoration-dotted">
+                          <span className={cn(
+                            "cursor-help underline underline-offset-2 decoration-dotted",
+                            isInfo && "text-green-600 dark:text-green-400"
+                          )}>
                             {errorInfo.title}
                           </span>
                         </ErrorTooltip>
@@ -246,7 +267,7 @@ export default function ErrorHistory() {
       {/* Summary */}
       {!isLoading && !error && errors.length > 0 && (
         <div className="text-sm text-muted-foreground text-center">
-          Showing {filteredErrors.length} of {errors.length} errors
+          Showing {filteredErrors.length} of {errors.length} events
         </div>
       )}
     </div>
