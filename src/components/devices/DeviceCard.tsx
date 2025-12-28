@@ -1,78 +1,85 @@
-import { Link } from 'react-router-dom'
-import { Plug, Sun, Zap, Battery, ArrowRight } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import type { DeviceWithState } from '@/types/device'
-import { BatteryGauge } from './BatteryGauge'
+import { Link } from "react-router-dom";
+import { Plug, Sun, Zap, Battery, ArrowRight } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { DeviceWithState } from "@/types/device";
+import { BatteryGauge } from "./BatteryGauge";
 
 interface DeviceCardProps {
-  device: DeviceWithState
+  device: DeviceWithState;
 }
 
 const deviceTypeLabels: Record<string, string> = {
-  DELTA_PRO: 'Delta Pro',
-  DELTA_PRO_3: 'Delta Pro 3',
-  RIVER: 'River',
-  RIVER_MAX: 'River Max',
-  RIVER_PRO: 'River Pro',
-  SMART_PLUG: 'Smart Plug',
-}
+  DELTA_PRO: "Delta Pro",
+  DELTA_PRO_3: "Delta Pro 3",
+  RIVER: "River",
+  RIVER_MAX: "River Max",
+  RIVER_PRO: "River Pro",
+  SMART_PLUG: "Smart Plug",
+};
 
 function PowerMetric({
   icon,
   label,
   value,
   colorClass,
-  isActive
+  isActive,
 }: {
-  icon: React.ReactNode
-  label: string
-  value: number
-  colorClass: string
-  isActive?: boolean
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  colorClass: string;
+  isActive?: boolean;
 }) {
   return (
-    <div className={cn(
-      'flex items-center gap-2 p-2 rounded-lg transition-all duration-300',
-      isActive ? 'bg-muted/60' : 'bg-transparent'
-    )}>
-      <div className={cn(
-        'p-1.5 rounded-md transition-colors duration-300',
-        isActive ? colorClass : 'bg-muted/50'
-      )}>
+    <div
+      className={cn(
+        "flex items-center gap-2 p-2 rounded-lg transition-all duration-300",
+        isActive ? "bg-muted/60" : "bg-transparent",
+      )}
+    >
+      <div
+        className={cn(
+          "p-1.5 rounded-md transition-colors duration-300",
+          isActive ? colorClass : "bg-muted/50",
+        )}
+      >
         {icon}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
           {label}
         </p>
-        <p className={cn(
-          'text-sm font-bold tabular-nums transition-colors duration-300',
-          isActive && 'text-foreground'
-        )}>
-          {value}<span className="text-xs font-normal text-muted-foreground ml-0.5">W</span>
+        <p
+          className={cn(
+            "text-sm font-bold tabular-nums transition-colors duration-300",
+            isActive && "text-foreground",
+          )}
+        >
+          {value}
+          <span className="text-xs font-normal text-muted-foreground ml-0.5">
+            W
+          </span>
         </p>
       </div>
     </div>
-  )
+  );
 }
 
 export function DeviceCard({ device }: DeviceCardProps) {
-  const state = device.state
+  const state = device.state;
 
-  const totalInput = state ? state.acInputWatts + state.solarInputWatts : 0
-  const totalOutput = state ? state.acOutputWatts + state.dcOutputWatts : 0
-  const isCharging = state ? state.batteryWatts > 0 : false
-  const isDischarging = state ? state.batteryWatts < 0 : false
+  const isCharging = state ? state.batteryWatts > 0 : false;
+  const isDischarging = state ? state.batteryWatts < 0 : false;
 
   return (
     <Link
       to={`/device/${device.serialNumber}`}
       className={cn(
-        'group block rounded-xl border bg-card overflow-hidden',
-        'transition-all duration-300 ease-out',
-        'hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30',
-        'hover:-translate-y-0.5',
-        !device.online && 'opacity-70'
+        "group block rounded-xl border bg-card overflow-hidden",
+        "transition-all duration-300 ease-out",
+        "hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30",
+        "hover:-translate-y-0.5",
+        !device.online && "opacity-70",
       )}
     >
       {/* Header with status */}
@@ -86,18 +93,24 @@ export function DeviceCard({ device }: DeviceCardProps) {
               {deviceTypeLabels[device.deviceType] || device.deviceType}
             </p>
           </div>
-          <div className={cn(
-            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium shrink-0',
-            'transition-colors duration-300',
-            device.online
-              ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-              : 'bg-muted text-muted-foreground'
-          )}>
-            <span className={cn(
-              'w-1.5 h-1.5 rounded-full',
-              device.online ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'
-            )} />
-            {device.online ? 'Online' : 'Offline'}
+          <div
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium shrink-0",
+              "transition-colors duration-300",
+              device.online
+                ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                : "bg-muted text-muted-foreground",
+            )}
+          >
+            <span
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                device.online
+                  ? "bg-green-500 animate-pulse"
+                  : "bg-muted-foreground",
+              )}
+            />
+            {device.online ? "Online" : "Offline"}
           </div>
         </div>
       </div>
@@ -106,7 +119,11 @@ export function DeviceCard({ device }: DeviceCardProps) {
         <>
           {/* Battery section */}
           <div className="px-5 py-4 flex items-center justify-center bg-gradient-to-b from-transparent to-muted/20">
-            <BatteryGauge soc={state.batterySoc} isCharging={isCharging} size="md" />
+            <BatteryGauge
+              soc={state.batterySoc}
+              isCharging={isCharging}
+              size="md"
+            />
           </div>
 
           {/* Power flow indicators */}
@@ -146,12 +163,22 @@ export function DeviceCard({ device }: DeviceCardProps) {
             <div className="mt-3 pt-3 border-t border-border/50">
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-1.5">
-                  <span className={cn(
-                    'w-2 h-2 rounded-full',
-                    isCharging ? 'bg-green-500' : isDischarging ? 'bg-orange-500' : 'bg-muted-foreground'
-                  )} />
+                  <span
+                    className={cn(
+                      "w-2 h-2 rounded-full",
+                      isCharging
+                        ? "bg-green-500"
+                        : isDischarging
+                          ? "bg-orange-500"
+                          : "bg-muted-foreground",
+                    )}
+                  />
                   <span className="text-muted-foreground">
-                    {isCharging ? 'Charging' : isDischarging ? 'Discharging' : 'Idle'}
+                    {isCharging
+                      ? "Charging"
+                      : isDischarging
+                        ? "Discharging"
+                        : "Idle"}
                   </span>
                 </div>
                 <div className="flex items-center gap-1 text-muted-foreground group-hover:text-primary transition-colors">
@@ -171,5 +198,5 @@ export function DeviceCard({ device }: DeviceCardProps) {
         </div>
       )}
     </Link>
-  )
+  );
 }

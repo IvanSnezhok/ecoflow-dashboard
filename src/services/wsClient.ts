@@ -74,7 +74,8 @@ class WebSocketClient {
     if (!update.sn || !update.data) return
 
     const deviceStore = useDeviceStore.getState()
-    deviceStore.updateDeviceState(update.sn, {
+    // Use updateDeviceStateFromServer to respect pending commands
+    deviceStore.updateDeviceStateFromServer(update.sn, {
       batterySoc: update.data.soc || 0,
       batteryWatts: (update.data.wattsInSum || 0) - (update.data.wattsOutSum || 0),
       acInputWatts: update.data.acInWatts || 0,

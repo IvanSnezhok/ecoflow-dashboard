@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import {
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -11,22 +11,16 @@ import {
 import type { HistoryDataPoint, ChartPeriod } from '@/types/device'
 import { chartColors, formatTimestamp } from './chartConfig'
 
-interface BatteryChartProps {
+interface TemperatureChartProps {
   data: HistoryDataPoint[]
   period: ChartPeriod
   height?: number
 }
 
-export const BatteryChart = memo(function BatteryChart({ data, period, height = 200 }: BatteryChartProps) {
+export const TemperatureChart = memo(function TemperatureChart({ data, period, height = 200 }: TemperatureChartProps) {
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 5, right: 5, left: 10, bottom: 5 }}>
-        <defs>
-          <linearGradient id="socGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-          </linearGradient>
-        </defs>
+      <LineChart data={data} margin={{ top: 5, right: 5, left: 10, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
         <XAxis
           dataKey="timestamp"
@@ -37,8 +31,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
           axisLine={false}
         />
         <YAxis
-          domain={[0, 100]}
-          tickFormatter={(value) => `${value}%`}
+          tickFormatter={(value) => `${value}°C`}
           stroke={chartColors.text}
           fontSize={11}
           tickLine={false}
@@ -52,16 +45,16 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
             fontSize: '12px',
           }}
           labelFormatter={(value) => new Date(value as string).toLocaleString('en-US')}
-          formatter={(value) => [`${value}%`, 'Battery Charge']}
+          formatter={(value) => [`${value}°C`, 'Temperature']}
         />
-        <Area
+        <Line
           type="monotone"
-          dataKey="batterySoc"
-          stroke={chartColors.batterySoc.stroke}
-          fill={chartColors.batterySoc.fill}
+          dataKey="temperature"
+          stroke={chartColors.temperature.stroke}
           strokeWidth={2}
+          dot={false}
         />
-      </AreaChart>
+      </LineChart>
     </ResponsiveContainer>
   )
 })

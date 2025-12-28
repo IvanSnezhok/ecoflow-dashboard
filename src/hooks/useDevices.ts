@@ -2,10 +2,18 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { api } from '@/services/api'
 
-const POLLING_INTERVAL = 1000 // 1 second
+const POLLING_INTERVAL = 3000 // 3 seconds (was 1 second)
 
 export function useDevices() {
-  const { devices, isLoading, error, setDevices, setLoading, setError } = useDeviceStore()
+  const {
+    devices,
+    isLoading,
+    error,
+    setDevices,
+    setLoading,
+    setError,
+    updateDeviceFromServer
+  } = useDeviceStore()
   const isFirstLoad = useRef(true)
   const [isTabVisible, setIsTabVisible] = useState(!document.hidden)
 
@@ -17,8 +25,17 @@ export function useDevices() {
 
     try {
       const response = await api.getDevices()
-      setDevices(response.data)
-      isFirstLoad.current = false
+
+      if (isFirstLoad.current) {
+        // First load: set all devices at once
+        setDevices(response.data)
+        isFirstLoad.current = false
+      } else {
+        // Subsequent loads: update each device (metadata + state) respecting pending commands
+        for (const device of response.data) {
+          updateDeviceFromServer(device)
+        }
+      }
     } catch (err) {
       // Only set error on first load, ignore polling errors
       if (isFirstLoad.current) {
@@ -26,7 +43,7 @@ export function useDevices() {
       }
       console.error('Polling error:', err)
     }
-  }, [setDevices, setLoading, setError])
+  }, [setDevices, setLoading, setError, updateDeviceFromServer])
 
   // Track tab visibility to pause/resume polling
   useEffect(() => {
@@ -47,7 +64,7 @@ export function useDevices() {
       return
     }
 
-    // Polling every second
+    // Polling every 3 seconds
     const interval = setInterval(fetchDevices, POLLING_INTERVAL)
 
     return () => clearInterval(interval)

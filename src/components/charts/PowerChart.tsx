@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import {
   LineChart,
   Line,
@@ -19,7 +20,7 @@ interface PowerChartProps {
   showOutputs?: boolean
 }
 
-export function PowerChart({
+export const PowerChart = memo(function PowerChart({
   data,
   period,
   height = 200,
@@ -28,7 +29,7 @@ export function PowerChart({
 }: PowerChartProps) {
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+      <LineChart data={data} margin={{ top: 5, right: 5, left: 10, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
         <XAxis
           dataKey="timestamp"
@@ -113,4 +114,4 @@ export function PowerChart({
       </LineChart>
     </ResponsiveContainer>
   )
-}
+})

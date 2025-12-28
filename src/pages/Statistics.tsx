@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft,
   Battery,
+  BatteryCharging,
   Zap,
   Sun,
   Plug,
@@ -13,21 +14,26 @@ import { useDeviceStore } from '@/stores/deviceStore'
 import {
   BatteryChart,
   PowerChart,
-  PeriodSelector,
+  TemperatureChart,
+  VoltageChart,
+  ExtraBatteryChart,
+  DateRangePicker,
   ChartContainer,
   useChartData,
 } from '@/components/charts'
-import type { ChartPeriod } from '@/types/device'
+import type { ChartPeriod, DateRange } from '@/types/device'
 
 export default function Statistics() {
   const { serialNumber } = useParams<{ serialNumber: string }>()
   const { devices } = useDeviceStore()
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>('24h')
+  const [customRange, setCustomRange] = useState<DateRange | null>(null)
 
   const device = devices.find((d) => d.serialNumber === serialNumber)
   const { data: chartData, isLoading, error, refetch } = useChartData(
     serialNumber || '',
-    chartPeriod
+    chartPeriod,
+    customRange
   )
 
   // Calculate statistics from chart data
@@ -61,6 +67,31 @@ export default function Statistics() {
       avgTemp,
     }
   }, [chartData])
+
+  // Check if we have data for voltage and extra batteries
+  const hasVoltageData = useMemo(() => {
+    return chartData.some(p => p.bmsMasterVol !== null)
+  }, [chartData])
+
+  const hasExtraBattery1Data = useMemo(() => {
+    return chartData.some(p => p.extraBattery1Soc !== null)
+  }, [chartData])
+
+  const hasExtraBattery2Data = useMemo(() => {
+    return chartData.some(p => p.extraBattery2Soc !== null)
+  }, [chartData])
+
+  const handlePeriodChange = (period: ChartPeriod) => {
+    setChartPeriod(period)
+    if (period !== 'custom') {
+      setCustomRange(null)
+    }
+  }
+
+  const handleCustomRangeChange = (range: DateRange) => {
+    setCustomRange(range)
+    setChartPeriod('custom')
+  }
 
   if (!device) {
     return (
@@ -99,9 +130,14 @@ export default function Statistics() {
         </div>
       </div>
 
-      {/* Period Selector */}
-      <div className="flex items-center justify-between">
-        <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
+      {/* Date Range Picker */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <DateRangePicker
+          period={chartPeriod}
+          customRange={customRange}
+          onPeriodChange={handlePeriodChange}
+          onCustomRangeChange={handleCustomRangeChange}
+        />
         {chartData.length > 0 && (
           <p className="text-sm text-muted-foreground">
             {chartData.length} data points
@@ -202,6 +238,127 @@ export default function Statistics() {
           showOutputs={true}
         />
       </ChartContainer>
+
+      {/* Temperature Chart */}
+      <ChartContainer
+        title="Battery Temperature"
+        icon={<Thermometer className="w-5 h-5 text-orange-500" />}
+        isLoading={isLoading}
+        error={error}
+        onRefresh={refetch}
+        isEmpty={chartData.length === 0}
+      >
+        <TemperatureChart data={chartData} period={chartPeriod} height={250} />
+      </ChartContainer>
+
+      {/* Voltage Chart - Only show if voltage data exists */}
+      {hasVoltageData && (
+        <ChartContainer
+          title="Battery Voltage"
+          icon={<Zap className="w-5 h-5 text-blue-500" />}
+          isLoading={isLoading}
+          error={error}
+          onRefresh={refetch}
+          isEmpty={chartData.length === 0}
+        >
+          <VoltageChart
+            data={chartData}
+            period={chartPeriod}
+            height={250}
+            showMainBattery={true}
+            showExtraBattery1={hasExtraBattery1Data}
+            showExtraBattery2={hasExtraBattery2Data}
+          />
+        </ChartContainer>
+      )}
+
+      {/* Extra Battery Section - Only show if extra batteries are connected */}
+      {(hasExtraBattery1Data || hasExtraBattery2Data) && (
+        <>
+          <h3 className="text-lg font-semibold mt-8 mb-4 flex items-center gap-2">
+            <BatteryCharging className="w-5 h-5 text-primary" />
+            Extra Battery Statistics
+          </h3>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {hasExtraBattery1Data && (
+              <>
+                <ChartContainer
+                  title="Extra Battery 1 - SOC"
+                  icon={<Battery className="w-5 h-5 text-emerald-500" />}
+                  isLoading={isLoading}
+                  error={error}
+                  onRefresh={refetch}
+                  isEmpty={chartData.length === 0}
+                >
+                  <ExtraBatteryChart
+                    data={chartData}
+                    period={chartPeriod}
+                    height={200}
+                    metric="soc"
+                    batteryIndex={1}
+                  />
+                </ChartContainer>
+
+                <ChartContainer
+                  title="Extra Battery 1 - Temperature"
+                  icon={<Thermometer className="w-5 h-5 text-emerald-500" />}
+                  isLoading={isLoading}
+                  error={error}
+                  onRefresh={refetch}
+                  isEmpty={chartData.length === 0}
+                >
+                  <ExtraBatteryChart
+                    data={chartData}
+                    period={chartPeriod}
+                    height={200}
+                    metric="temp"
+                    batteryIndex={1}
+                  />
+                </ChartContainer>
+              </>
+            )}
+
+            {hasExtraBattery2Data && (
+              <>
+                <ChartContainer
+                  title="Extra Battery 2 - SOC"
+                  icon={<Battery className="w-5 h-5 text-violet-500" />}
+                  isLoading={isLoading}
+                  error={error}
+                  onRefresh={refetch}
+                  isEmpty={chartData.length === 0}
+                >
+                  <ExtraBatteryChart
+                    data={chartData}
+                    period={chartPeriod}
+                    height={200}
+                    metric="soc"
+                    batteryIndex={2}
+                  />
+                </ChartContainer>
+
+                <ChartContainer
+                  title="Extra Battery 2 - Temperature"
+                  icon={<Thermometer className="w-5 h-5 text-violet-500" />}
+                  isLoading={isLoading}
+                  error={error}
+                  onRefresh={refetch}
+                  isEmpty={chartData.length === 0}
+                >
+                  <ExtraBatteryChart
+                    data={chartData}
+                    period={chartPeriod}
+                    height={200}
+                    metric="temp"
+                    batteryIndex={2}
+                  />
+                </ChartContainer>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

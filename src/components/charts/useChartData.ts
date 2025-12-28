@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '@/services/api'
-import type { ChartPeriod, HistoryDataPoint } from '@/types/device'
+import type { ChartPeriod, DateRange, HistoryDataPoint } from '@/types/device'
 
 interface UseChartDataResult {
   data: HistoryDataPoint[]
@@ -9,40 +9,32 @@ interface UseChartDataResult {
   refetch: () => void
 }
 
-export function useChartData(serialNumber: string, period: ChartPeriod): UseChartDataResult {
-  const [data, setData] = useState<HistoryDataPoint[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+export function useChartData(
+  serialNumber: string,
+  period: ChartPeriod,
+  customRange?: DateRange | null
+): UseChartDataResult {
+  const query = useQuery({
+    queryKey: ['deviceHistory', serialNumber, period, customRange?.from, customRange?.to],
+    queryFn: async () => {
+      const response = await api.getDeviceHistory(
+        serialNumber,
+        period,
+        period === 'custom' && customRange ? customRange : undefined
+      )
+      return response.data.dataPoints
+    },
+    // Shorter stale time for real-time periods, longer for historical
+    staleTime: period === '10m' ? 30000 : period === 'custom' ? 60000 : 60000,
+    // Auto-refresh for 10m period only
+    refetchInterval: period === '10m' ? 30000 : false,
+    enabled: !!serialNumber && (period !== 'custom' || !!customRange),
+  })
 
-  const fetchData = useCallback(async () => {
-    if (!serialNumber) return
-
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await api.getDeviceHistory(serialNumber, period)
-      setData(response.data.dataPoints)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load chart data'
-      setError(message)
-      setData([])
-    } finally {
-      setIsLoading(false)
-    }
-  }, [serialNumber, period])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
-
-  // Auto-refresh for short periods
-  useEffect(() => {
-    if (period === '10m') {
-      const interval = setInterval(fetchData, 30000) // Refresh every 30 seconds
-      return () => clearInterval(interval)
-    }
-  }, [period, fetchData])
-
-  return { data, isLoading, error, refetch: fetchData }
+  return {
+    data: query.data ?? [],
+    isLoading: query.isLoading,
+    error: query.error instanceof Error ? query.error.message : query.error ? String(query.error) : null,
+    refetch: () => { query.refetch() },
+  }
 }

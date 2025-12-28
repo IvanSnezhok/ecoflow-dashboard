@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api } from '@/services/api'
 import { useDeviceStore } from '@/stores/deviceStore'
+import { useSettingsStore, commonTimezones } from '@/stores/settingsStore'
 import { cn } from '@/lib/utils'
-import { CheckCircle, XCircle, RefreshCw, Wifi, Database, Server } from 'lucide-react'
+import { CheckCircle, XCircle, RefreshCw, Wifi, Database, Server, Clock, Globe } from 'lucide-react'
 
 export default function Settings() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'error'>('checking')
   const [apiError, setApiError] = useState<string | null>(null)
   const { devices } = useDeviceStore()
+  const { timezone, timeFormat, setTimezone, setTimeFormat } = useSettingsStore()
 
   const checkApiConnection = async () => {
     setApiStatus('checking')
@@ -122,6 +124,63 @@ export default function Settings() {
               <p className="text-sm text-muted-foreground mt-1">
                 {devices.length} device(s)
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Time Settings */}
+        <div className="rounded-lg border bg-card p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Clock className="w-5 h-5" />
+            <h3 className="font-semibold">Time Settings</h3>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Globe className="w-4 h-4" />
+                Timezone
+              </label>
+              <select
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                className="mt-2 w-full px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                {commonTimezones.map((tz) => (
+                  <option key={tz.value} value={tz.value}>
+                    {tz.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Current: {new Date().toLocaleString('en-US', { timeZone: timezone, timeZoneName: 'short' })}
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Time Format</label>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setTimeFormat('24h')}
+                  className={cn(
+                    'flex-1 px-4 py-2 rounded-lg border text-sm font-medium transition-colors',
+                    timeFormat === '24h'
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-card hover:bg-accent'
+                  )}
+                >
+                  24-hour (14:30)
+                </button>
+                <button
+                  onClick={() => setTimeFormat('12h')}
+                  className={cn(
+                    'flex-1 px-4 py-2 rounded-lg border text-sm font-medium transition-colors',
+                    timeFormat === '12h'
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-card hover:bg-accent'
+                  )}
+                >
+                  12-hour (2:30 PM)
+                </button>
+              </div>
             </div>
           </div>
         </div>

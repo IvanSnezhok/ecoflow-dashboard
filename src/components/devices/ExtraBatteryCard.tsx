@@ -1,5 +1,6 @@
-import { Thermometer, Zap, RefreshCw, Heart, Activity } from 'lucide-react'
+import { Thermometer, Zap, RefreshCw, Heart, Activity, AlertTriangle } from 'lucide-react'
 import { BatteryGauge } from './BatteryGauge'
+import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
 import { cn } from '@/lib/utils'
 import type { ExtraBatteryState } from '@/types/device'
 
@@ -60,12 +61,25 @@ export function ExtraBatteryCard({ battery, index }: ExtraBatteryCardProps) {
             <p className="text-[10px] text-muted-foreground">{battery.cycles} cycles</p>
           </div>
         </div>
-        <span className={cn(
-          'text-[10px] font-medium px-2 py-1 rounded-full uppercase tracking-wider',
-          'bg-green-500/10 text-green-600 dark:text-green-400'
-        )}>
-          Connected
-        </span>
+        <div className="flex items-center gap-2">
+          {battery.errCode !== undefined && battery.errCode !== 0 && (
+            <ErrorTooltip errorCode={battery.errCode} errorType="battery">
+              <span className={cn(
+                'text-[10px] font-medium px-2 py-1 rounded-full uppercase tracking-wider',
+                'bg-red-500/10 text-red-600 dark:text-red-400 flex items-center gap-1'
+              )}>
+                <AlertTriangle className="w-3 h-3" />
+                Error {battery.errCode}
+              </span>
+            </ErrorTooltip>
+          )}
+          <span className={cn(
+            'text-[10px] font-medium px-2 py-1 rounded-full uppercase tracking-wider',
+            'bg-green-500/10 text-green-600 dark:text-green-400'
+          )}>
+            Connected
+          </span>
+        </div>
       </div>
 
       {/* Main content */}

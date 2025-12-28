@@ -64,7 +64,33 @@ export function initDatabase(): void {
       ON operation_logs(operation_type);
   `)
 
+  // Run migrations for new columns
+  migrateDatabase()
+
   console.log('Database initialized')
+}
+
+// Migration for new chart data columns
+function migrateDatabase(): void {
+  const tableInfo = db.prepare("PRAGMA table_info(device_states)").all() as Array<{ name: string }>
+  const existingColumns = new Set(tableInfo.map(col => col.name))
+
+  const newColumns = [
+    { name: 'bms_master_vol', type: 'INTEGER' },
+    { name: 'extra_battery1_soc', type: 'INTEGER' },
+    { name: 'extra_battery1_temp', type: 'REAL' },
+    { name: 'extra_battery1_vol', type: 'INTEGER' },
+    { name: 'extra_battery2_soc', type: 'INTEGER' },
+    { name: 'extra_battery2_temp', type: 'REAL' },
+    { name: 'extra_battery2_vol', type: 'INTEGER' },
+  ]
+
+  for (const col of newColumns) {
+    if (!existingColumns.has(col.name)) {
+      db.exec(`ALTER TABLE device_states ADD COLUMN ${col.name} ${col.type}`)
+      console.log(`Migration: Added column ${col.name} to device_states`)
+    }
+  }
 }
 
 // Device operations
@@ -108,14 +134,24 @@ export function insertDeviceState(
     dcOutputWatts: number
     temperature: number
     rawData: string
+    // New fields for detailed charts
+    bmsMasterVol?: number | null
+    extraBattery1Soc?: number | null
+    extraBattery1Temp?: number | null
+    extraBattery1Vol?: number | null
+    extraBattery2Soc?: number | null
+    extraBattery2Temp?: number | null
+    extraBattery2Vol?: number | null
   }
 ) {
   const stmt = db.prepare(`
     INSERT INTO device_states (
       device_id, battery_soc, battery_watts, ac_input_watts,
       solar_input_watts, ac_output_watts, dc_output_watts,
-      temperature, raw_data
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      temperature, raw_data,
+      bms_master_vol, extra_battery1_soc, extra_battery1_temp, extra_battery1_vol,
+      extra_battery2_soc, extra_battery2_temp, extra_battery2_vol
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   return stmt.run(
     deviceId,
@@ -126,7 +162,14 @@ export function insertDeviceState(
     state.acOutputWatts,
     state.dcOutputWatts,
     state.temperature,
-    state.rawData
+    state.rawData,
+    state.bmsMasterVol ?? null,
+    state.extraBattery1Soc ?? null,
+    state.extraBattery1Temp ?? null,
+    state.extraBattery1Vol ?? null,
+    state.extraBattery2Soc ?? null,
+    state.extraBattery2Temp ?? null,
+    state.extraBattery2Vol ?? null
   )
 }
 
@@ -139,6 +182,45 @@ export function getLatestDeviceState(deviceId: number) {
   `).get(deviceId)
 }
 
+// Get last known error codes for a device (for offline state)
+export interface LastKnownErrors {
+  bmsMasterErrCode: number;
+  invErrCode: number;
+  mpptFaultCode: number;
+  overloadState: number;
+  emsIsNormal: boolean;
+  bmsSlave1ErrCode?: number;
+  bmsSlave2ErrCode?: number;
+  timestamp: string;
+}
+
+export function getLastKnownErrors(deviceId: number): LastKnownErrors | null {
+  const state = db.prepare(`
+    SELECT raw_data, timestamp FROM device_states
+    WHERE device_id = ?
+    ORDER BY timestamp DESC
+    LIMIT 1
+  `).get(deviceId) as { raw_data: string; timestamp: string } | undefined;
+
+  if (!state || !state.raw_data) return null;
+
+  try {
+    const rawData = JSON.parse(state.raw_data);
+    return {
+      bmsMasterErrCode: rawData["bmsMaster.errCode"] ?? 0,
+      invErrCode: rawData["inv.errCode"] ?? 0,
+      mpptFaultCode: rawData["mppt.faultCode"] ?? 0,
+      overloadState: rawData["pd.iconOverloadState"] ?? 0,
+      emsIsNormal: (rawData["ems.emsIsNormalFlag"] ?? 1) === 1,
+      bmsSlave1ErrCode: rawData["bmsSlave1.errCode"],
+      bmsSlave2ErrCode: rawData["bmsSlave2.errCode"],
+      timestamp: state.timestamp,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Historical data for charts
 export interface HistoryDataPoint {
   timestamp: string
@@ -149,6 +231,14 @@ export interface HistoryDataPoint {
   acOutputWatts: number
   dcOutputWatts: number
   temperature: number
+  // New fields for detailed charts
+  bmsMasterVol: number | null
+  extraBattery1Soc: number | null
+  extraBattery1Temp: number | null
+  extraBattery1Vol: number | null
+  extraBattery2Soc: number | null
+  extraBattery2Temp: number | null
+  extraBattery2Vol: number | null
 }
 
 export type AggregationType = 'none' | '1min' | '5min' | '15min' | '1hour' | '6hour'
@@ -181,7 +271,14 @@ export function getDeviceHistory(options: {
         solar_input_watts as solarInputWatts,
         ac_output_watts as acOutputWatts,
         dc_output_watts as dcOutputWatts,
-        temperature
+        temperature,
+        bms_master_vol as bmsMasterVol,
+        extra_battery1_soc as extraBattery1Soc,
+        extra_battery1_temp as extraBattery1Temp,
+        extra_battery1_vol as extraBattery1Vol,
+        extra_battery2_soc as extraBattery2Soc,
+        extra_battery2_temp as extraBattery2Temp,
+        extra_battery2_vol as extraBattery2Vol
       FROM device_states
       WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
       ORDER BY timestamp ASC
@@ -226,7 +323,14 @@ export function getDeviceHistory(options: {
         ROUND(AVG(solar_input_watts)) as solarInputWatts,
         ROUND(AVG(ac_output_watts)) as acOutputWatts,
         ROUND(AVG(dc_output_watts)) as dcOutputWatts,
-        ROUND(AVG(temperature), 1) as temperature
+        ROUND(AVG(temperature), 1) as temperature,
+        ROUND(AVG(bms_master_vol)) as bmsMasterVol,
+        ROUND(AVG(extra_battery1_soc)) as extraBattery1Soc,
+        ROUND(AVG(extra_battery1_temp), 1) as extraBattery1Temp,
+        ROUND(AVG(extra_battery1_vol)) as extraBattery1Vol,
+        ROUND(AVG(extra_battery2_soc)) as extraBattery2Soc,
+        ROUND(AVG(extra_battery2_temp), 1) as extraBattery2Temp,
+        ROUND(AVG(extra_battery2_vol)) as extraBattery2Vol
       FROM device_states
       WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
       GROUP BY strftime('%Y-%m-%dT%H:', timestamp) ||
@@ -249,7 +353,14 @@ export function getDeviceHistory(options: {
         ROUND(AVG(solar_input_watts)) as solarInputWatts,
         ROUND(AVG(ac_output_watts)) as acOutputWatts,
         ROUND(AVG(dc_output_watts)) as dcOutputWatts,
-        ROUND(AVG(temperature), 1) as temperature
+        ROUND(AVG(temperature), 1) as temperature,
+        ROUND(AVG(bms_master_vol)) as bmsMasterVol,
+        ROUND(AVG(extra_battery1_soc)) as extraBattery1Soc,
+        ROUND(AVG(extra_battery1_temp), 1) as extraBattery1Temp,
+        ROUND(AVG(extra_battery1_vol)) as extraBattery1Vol,
+        ROUND(AVG(extra_battery2_soc)) as extraBattery2Soc,
+        ROUND(AVG(extra_battery2_temp), 1) as extraBattery2Temp,
+        ROUND(AVG(extra_battery2_vol)) as extraBattery2Vol
       FROM device_states
       WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
       GROUP BY strftime('%Y-%m-%dT', timestamp) ||
@@ -269,7 +380,14 @@ export function getDeviceHistory(options: {
       ROUND(AVG(solar_input_watts)) as solarInputWatts,
       ROUND(AVG(ac_output_watts)) as acOutputWatts,
       ROUND(AVG(dc_output_watts)) as dcOutputWatts,
-      ROUND(AVG(temperature), 1) as temperature
+      ROUND(AVG(temperature), 1) as temperature,
+      ROUND(AVG(bms_master_vol)) as bmsMasterVol,
+      ROUND(AVG(extra_battery1_soc)) as extraBattery1Soc,
+      ROUND(AVG(extra_battery1_temp), 1) as extraBattery1Temp,
+      ROUND(AVG(extra_battery1_vol)) as extraBattery1Vol,
+      ROUND(AVG(extra_battery2_soc)) as extraBattery2Soc,
+      ROUND(AVG(extra_battery2_temp), 1) as extraBattery2Temp,
+      ROUND(AVG(extra_battery2_vol)) as extraBattery2Vol
     FROM device_states
     WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
     GROUP BY strftime('${groupFormat}', timestamp)
@@ -330,6 +448,74 @@ export function getLogs(options: {
   params.push(limit, offset)
 
   return db.prepare(query).all(...params)
+}
+
+// Error history for devices
+export type ErrorType = 'bms' | 'inv' | 'mppt' | 'overload' | 'ems' | 'extraBattery1' | 'extraBattery2';
+
+export interface ErrorHistoryEntry {
+  timestamp: string;
+  errorType: ErrorType;
+  errorCode: number;
+}
+
+export function getErrorHistory(deviceId: number, limit: number = 100): ErrorHistoryEntry[] {
+  const states = db.prepare(`
+    SELECT raw_data, timestamp
+    FROM device_states
+    WHERE device_id = ?
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `).all(deviceId, limit * 10) as Array<{ raw_data: string; timestamp: string }>;
+
+  const errors: ErrorHistoryEntry[] = [];
+  const seen = new Set<string>();
+
+  const errorFields: Array<{ type: ErrorType; field: string }> = [
+    { type: 'bms', field: 'bmsMaster.errCode' },
+    { type: 'inv', field: 'inv.errCode' },
+    { type: 'mppt', field: 'mppt.faultCode' },
+    { type: 'overload', field: 'pd.iconOverloadState' },
+    { type: 'extraBattery1', field: 'bmsSlave1.errCode' },
+    { type: 'extraBattery2', field: 'bmsSlave2.errCode' },
+  ];
+
+  for (const state of states) {
+    if (!state.raw_data) continue;
+
+    try {
+      const data = JSON.parse(state.raw_data);
+
+      // BMS codes that indicate battery state, not errors
+      // 5 = discharged state, 23 = charged state
+      const BMS_STATE_CODES = new Set([5, 23]);
+
+      for (const { type, field } of errorFields) {
+        const code = data[field];
+        if (code && code !== 0) {
+          // Skip BMS state codes (not actual errors)
+          if (type === 'bms' && BMS_STATE_CODES.has(code)) continue;
+
+          // Group by type-code-minute to avoid duplicates
+          const key = `${type}-${code}-${state.timestamp.substring(0, 16)}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            errors.push({
+              timestamp: state.timestamp,
+              errorType: type,
+              errorCode: code,
+            });
+          }
+        }
+      }
+
+      if (errors.length >= limit) break;
+    } catch {
+      // Skip invalid JSON
+    }
+  }
+
+  return errors.slice(0, limit);
 }
 
 // Cleanup old data
