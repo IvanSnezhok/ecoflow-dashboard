@@ -79,6 +79,32 @@ const BMS_ERRORS: Record<number, ErrorCodeInfo> = {
     ],
     docsUrl: "https://www.ecoflow.com/support",
   },
+  6: {
+    code: 6,
+    title: "Fully Charged (100%)",
+    description: "The battery is fully charged to 100%. Charging has stopped.",
+    causes: [
+      "Battery reached maximum capacity",
+    ],
+    solutions: [
+      "No action needed - this is normal operation",
+      "You can disconnect the charger or continue using the device",
+    ],
+    docsUrl: "https://www.ecoflow.com/support",
+  },
+  23: {
+    code: 23,
+    title: "Charged to User Limit",
+    description: "The battery has reached the maximum charge level set by the user.",
+    causes: [
+      "Battery reached the user-configured maximum SOC limit",
+    ],
+    solutions: [
+      "No action needed - this is normal operation",
+      "To charge higher, increase the Max Charge SOC in device settings",
+    ],
+    docsUrl: "https://www.ecoflow.com/support",
+  },
   77: {
     code: 77,
     title: "Cell Voltage Imbalance",
