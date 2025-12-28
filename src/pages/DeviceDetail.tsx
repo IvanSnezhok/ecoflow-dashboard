@@ -32,10 +32,18 @@ import { cn } from "@/lib/utils";
 import { ErrorTooltip } from "@/components/ui/ErrorTooltip";
 import type { ChartPeriod, DeviceErrorCodes, LastKnownErrors } from "@/types/device";
 
+// Status codes to hide (charging status, not actual errors)
+const HIDDEN_STATUS_CODES = [5, 6, 23];
+
+// Helper to check if error code is a real error (not a status)
+function isRealError(code: number): boolean {
+  return code !== 0 && !HIDDEN_STATUS_CODES.includes(code);
+}
+
 // Helper function to check if there are any errors
 function hasErrors(errorCodes: DeviceErrorCodes | LastKnownErrors): boolean {
   const hasBaseErrors =
-    errorCodes.bmsMasterErrCode !== 0 ||
+    isRealError(errorCodes.bmsMasterErrCode) ||
     errorCodes.invErrCode !== 0 ||
     errorCodes.mpptFaultCode !== 0 ||
     errorCodes.overloadState !== 0 ||
@@ -46,8 +54,8 @@ function hasErrors(errorCodes: DeviceErrorCodes | LastKnownErrors): boolean {
     const lastKnown = errorCodes as LastKnownErrors;
     return (
       hasBaseErrors ||
-      (lastKnown.bmsSlave1ErrCode !== undefined && lastKnown.bmsSlave1ErrCode !== 0) ||
-      (lastKnown.bmsSlave2ErrCode !== undefined && lastKnown.bmsSlave2ErrCode !== 0)
+      (lastKnown.bmsSlave1ErrCode !== undefined && isRealError(lastKnown.bmsSlave1ErrCode)) ||
+      (lastKnown.bmsSlave2ErrCode !== undefined && isRealError(lastKnown.bmsSlave2ErrCode))
     );
   }
 
@@ -511,7 +519,7 @@ export default function DeviceDetail() {
             </span>
           </h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {state.errorCodes.bmsMasterErrCode !== 0 && (
+            {isRealError(state.errorCodes.bmsMasterErrCode) && (
               <ErrorTooltip errorCode={state.errorCodes.bmsMasterErrCode} errorType="bms">
                 <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-lg px-3 py-2">
                   <span className="text-red-500 font-medium">BMS Error:</span>
@@ -566,7 +574,7 @@ export default function DeviceDetail() {
             </span>
           </h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {device.lastKnownErrors.bmsMasterErrCode !== 0 && (
+            {isRealError(device.lastKnownErrors.bmsMasterErrCode) && (
               <ErrorTooltip errorCode={device.lastKnownErrors.bmsMasterErrCode} errorType="bms">
                 <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
                   <span className="text-amber-600 font-medium">BMS Error:</span>
@@ -606,7 +614,7 @@ export default function DeviceDetail() {
                 </div>
               </ErrorTooltip>
             )}
-            {device.lastKnownErrors.bmsSlave1ErrCode !== undefined && device.lastKnownErrors.bmsSlave1ErrCode !== 0 && (
+            {device.lastKnownErrors.bmsSlave1ErrCode !== undefined && isRealError(device.lastKnownErrors.bmsSlave1ErrCode) && (
               <ErrorTooltip errorCode={device.lastKnownErrors.bmsSlave1ErrCode} errorType="battery">
                 <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
                   <span className="text-amber-600 font-medium">Extra Battery 1:</span>
@@ -614,7 +622,7 @@ export default function DeviceDetail() {
                 </div>
               </ErrorTooltip>
             )}
-            {device.lastKnownErrors.bmsSlave2ErrCode !== undefined && device.lastKnownErrors.bmsSlave2ErrCode !== 0 && (
+            {device.lastKnownErrors.bmsSlave2ErrCode !== undefined && isRealError(device.lastKnownErrors.bmsSlave2ErrCode) && (
               <ErrorTooltip errorCode={device.lastKnownErrors.bmsSlave2ErrCode} errorType="battery">
                 <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
                   <span className="text-amber-600 font-medium">Extra Battery 2:</span>
