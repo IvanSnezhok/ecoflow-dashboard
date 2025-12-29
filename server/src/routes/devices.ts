@@ -201,13 +201,11 @@ router.get("/", async (_req: Request, res: Response) => {
                   extraBatteryCache.set(apiDevice.sn, cache);
                   return parsed;
                 }
-                // Return cached data if available (within 5 minutes)
-                const cached = extraBatteryCache.get(
-                  apiDevice.sn,
-                )?.extraBattery1;
-                if (cached && Date.now() - cached.lastUpdated < 5 * 60 * 1000) {
-                  const { lastUpdated, ...batteryData } = cached;
-                  return batteryData;
+                // Battery disconnected - clear cache and return undefined
+                const cache = extraBatteryCache.get(apiDevice.sn);
+                if (cache?.extraBattery1) {
+                  delete cache.extraBattery1;
+                  extraBatteryCache.set(apiDevice.sn, cache);
                 }
                 return undefined;
               })(),
@@ -220,13 +218,11 @@ router.get("/", async (_req: Request, res: Response) => {
                   extraBatteryCache.set(apiDevice.sn, cache);
                   return parsed;
                 }
-                // Return cached data if available (within 5 minutes)
-                const cached = extraBatteryCache.get(
-                  apiDevice.sn,
-                )?.extraBattery2;
-                if (cached && Date.now() - cached.lastUpdated < 5 * 60 * 1000) {
-                  const { lastUpdated, ...batteryData } = cached;
-                  return batteryData;
+                // Battery disconnected - clear cache and return undefined
+                const cache = extraBatteryCache.get(apiDevice.sn);
+                if (cache?.extraBattery2) {
+                  delete cache.extraBattery2;
+                  extraBatteryCache.set(apiDevice.sn, cache);
                 }
                 return undefined;
               })(),
