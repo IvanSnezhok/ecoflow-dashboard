@@ -1,8 +1,11 @@
 export interface Device {
+  id: number;
   serialNumber: string;
   deviceType:
     | "DELTA_PRO"
     | "DELTA_PRO_3"
+    | "DELTA Pro"
+    | "DELTA Max"
     | "RIVER"
     | "RIVER_MAX"
     | "RIVER_PRO"
@@ -83,13 +86,13 @@ export interface DateRange {
 
 export interface HistoryDataPoint {
   timestamp: string;
-  batterySoc: number;
-  batteryWatts: number;
-  acInputWatts: number;
-  solarInputWatts: number;
-  acOutputWatts: number;
-  dcOutputWatts: number;
-  temperature: number;
+  batterySoc: number | null;
+  batteryWatts: number | null;
+  acInputWatts: number | null;
+  solarInputWatts: number | null;
+  acOutputWatts: number | null;
+  dcOutputWatts: number | null;
+  temperature: number | null;
   // New fields for detailed charts
   bmsMasterVol: number | null;
   extraBattery1Soc: number | null;

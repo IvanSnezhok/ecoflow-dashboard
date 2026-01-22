@@ -11,6 +11,8 @@ interface DeviceCardProps {
 const deviceTypeLabels: Record<string, string> = {
   DELTA_PRO: "Delta Pro",
   DELTA_PRO_3: "Delta Pro 3",
+  "DELTA Pro": "Delta Pro",
+  "DELTA Max": "Delta Max 2000",
   RIVER: "River",
   RIVER_MAX: "River Max",
   RIVER_PRO: "River Pro",
