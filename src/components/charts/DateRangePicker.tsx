@@ -54,11 +54,18 @@ export function DateRangePicker({
   }, [onPeriodChange])
 
   const handleCustomClick = useCallback(() => {
-    setIsExpanded(!isExpanded)
     if (!isExpanded) {
+      // Auto-apply default range (last 24 hours) when opening custom picker
+      const now = new Date()
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      onCustomRangeChange({
+        from: yesterday.toISOString(),
+        to: now.toISOString(),
+      })
       onPeriodChange('custom')
     }
-  }, [isExpanded, onPeriodChange])
+    setIsExpanded(!isExpanded)
+  }, [isExpanded, onPeriodChange, onCustomRangeChange])
 
   const handleApplyCustomRange = useCallback(() => {
     const from = fromLocalDateTimeString(localFrom)

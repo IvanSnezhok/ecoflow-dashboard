@@ -93,8 +93,6 @@ export default function Statistics() {
     // Filter out data points with null values for each metric
     const socData = chartData.filter((p) => p.batterySoc !== null).map((p) => p.batterySoc as number)
     const solarData = chartData.filter((p) => p.solarInputWatts !== null).map((p) => p.solarInputWatts as number)
-    const acOutputData = chartData.filter((p) => p.acOutputWatts !== null).map((p) => p.acOutputWatts as number)
-    const dcOutputData = chartData.filter((p) => p.dcOutputWatts !== null).map((p) => p.dcOutputWatts as number)
     const tempData = chartData.filter((p) => p.temperature !== null).map((p) => p.temperature as number)
 
     if (socData.length === 0) {
@@ -104,11 +102,30 @@ export default function Statistics() {
     const avgSoc = Math.round(socData.reduce((sum, v) => sum + v, 0) / socData.length)
     const maxSolar = solarData.length > 0 ? Math.max(...solarData) : 0
     const avgSolar = solarData.length > 0 ? Math.round(solarData.reduce((sum, v) => sum + v, 0) / solarData.length) : 0
-    const totalAcOutput = acOutputData.reduce((sum, v) => sum + v, 0)
-    const totalDcOutput = dcOutputData.reduce((sum, v) => sum + v, 0)
     const avgTemp = tempData.length > 0 ? Math.round(tempData.reduce((sum, v) => sum + v, 0) / tempData.length) : 0
     const minSoc = Math.min(...socData)
     const maxSoc = Math.max(...socData)
+
+    // Calculate energy (Wh) by integrating power over time intervals
+    // Energy = Power × Time, summing for each interval between data points
+    let totalEnergyWh = 0
+    for (let i = 0; i < chartData.length - 1; i++) {
+      const current = chartData[i]
+      const next = chartData[i + 1]
+
+      // Calculate time interval in hours
+      const t1 = new Date(current.timestamp).getTime()
+      const t2 = new Date(next.timestamp).getTime()
+      const intervalHours = (t2 - t1) / (1000 * 60 * 60) // ms to hours
+
+      // Get power values (use 0 if null)
+      const acOutput = current.acOutputWatts || 0
+      const dcOutput = current.dcOutputWatts || 0
+      const totalPower = acOutput + dcOutput
+
+      // Energy = Power × Time
+      totalEnergyWh += totalPower * intervalHours
+    }
 
     return {
       avgSoc,
@@ -116,7 +133,7 @@ export default function Statistics() {
       maxSoc,
       maxSolar,
       avgSolar,
-      totalOutput: totalAcOutput + totalDcOutput,
+      totalEnergyWh: Math.round(totalEnergyWh),
       avgTemp,
     }
   }, [chartData])
@@ -219,7 +236,7 @@ export default function Statistics() {
           <StatCard
             icon={<Activity className="w-4 h-4" />}
             label="Total Consumption"
-            value={Math.round(stats.totalOutput / 60)}
+            value={stats.totalEnergyWh}
             unit="Wh"
             subtext="For selected period"
             colorClass="text-energy-blue"
@@ -245,7 +262,7 @@ export default function Statistics() {
           onRefresh={refetch}
           isEmpty={chartData.length === 0}
         >
-          <BatteryChart data={chartData} period={chartPeriod} height={220} />
+          <BatteryChart data={chartData} period={chartPeriod} height={220} customRange={customRange} />
         </ChartContainer>
 
         {/* Temperature Chart */}
@@ -257,7 +274,7 @@ export default function Statistics() {
           onRefresh={refetch}
           isEmpty={chartData.length === 0}
         >
-          <TemperatureChart data={chartData} period={chartPeriod} height={220} />
+          <TemperatureChart data={chartData} period={chartPeriod} height={220} customRange={customRange} />
         </ChartContainer>
       </div>
 
@@ -276,6 +293,7 @@ export default function Statistics() {
           height={250}
           showInputs={true}
           showOutputs={false}
+          customRange={customRange}
         />
       </ChartContainer>
 
@@ -293,6 +311,7 @@ export default function Statistics() {
           height={250}
           showInputs={false}
           showOutputs={true}
+          customRange={customRange}
         />
       </ChartContainer>
 
@@ -313,6 +332,7 @@ export default function Statistics() {
             showMainBattery={true}
             showExtraBattery1={hasExtraBattery1Data}
             showExtraBattery2={hasExtraBattery2Data}
+            customRange={customRange}
           />
         </ChartContainer>
       )}
@@ -344,6 +364,7 @@ export default function Statistics() {
                     height={180}
                     metric="soc"
                     batteryIndex={1}
+                    customRange={customRange}
                   />
                 </ChartContainer>
 
@@ -361,6 +382,7 @@ export default function Statistics() {
                     height={180}
                     metric="temp"
                     batteryIndex={1}
+                    customRange={customRange}
                   />
                 </ChartContainer>
               </>
@@ -382,6 +404,7 @@ export default function Statistics() {
                     height={180}
                     metric="soc"
                     batteryIndex={2}
+                    customRange={customRange}
                   />
                 </ChartContainer>
 
@@ -399,6 +422,7 @@ export default function Statistics() {
                     height={180}
                     metric="temp"
                     batteryIndex={2}
+                    customRange={customRange}
                   />
                 </ChartContainer>
               </>

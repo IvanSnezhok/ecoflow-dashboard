@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import {
   LineChart,
   Line,
@@ -9,32 +9,38 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
-import type { HistoryDataPoint, ChartPeriod } from '@/types/device'
+import type { HistoryDataPoint, ChartPeriod, DateRange } from '@/types/device'
 import { chartColors, formatTimestamp } from './chartConfig'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 interface TemperatureChartProps {
   data: HistoryDataPoint[]
   period: ChartPeriod
   height?: number
+  customRange?: DateRange | null
 }
 
-// Custom tooltip component
+// Custom tooltip component with timezone support
 function CustomTooltip({ active, payload, label }: any) {
+  const { timezone, timeFormat } = useSettingsStore()
+
   if (!active || !payload || !payload.length) return null
 
   const value = payload[0]?.value
   // Color based on temperature: normal (green) < 35°C, warm (yellow) 35-45°C, hot (red) > 45°C
   const color = value >= 45 ? '#EF4444' : value >= 35 ? '#F59E0B' : '#10B981'
+  const hour12 = timeFormat === '12h'
 
   return (
     <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[120px]">
       <p className="text-[10px] text-muted-foreground font-mono mb-1">
         {new Date(label).toLocaleString('en-US', {
+          timeZone: timezone,
           month: 'short',
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          hour12: false
+          hour12
         })}
       </p>
       <div className="flex items-center gap-2">
@@ -49,7 +55,23 @@ function CustomTooltip({ active, payload, label }: any) {
   )
 }
 
-export const TemperatureChart = memo(function TemperatureChart({ data, period, height = 200 }: TemperatureChartProps) {
+export const TemperatureChart = memo(function TemperatureChart({ data, period, height = 200, customRange }: TemperatureChartProps) {
+  // Subscribe to settings store to re-render when timezone changes
+  const { timezone, timeFormat } = useSettingsStore()
+
+  // Calculate custom range duration in hours
+  const customRangeDurationHours = useMemo(() => {
+    if (period !== 'custom' || !customRange) return undefined
+    const from = new Date(customRange.from).getTime()
+    const to = new Date(customRange.to).getTime()
+    return (to - from) / (1000 * 60 * 60)
+  }, [period, customRange])
+
+  // Memoize the tick formatter to use current settings
+  const tickFormatter = useMemo(() => {
+    return (value: string) => formatTimestamp(value, period, customRangeDurationHours)
+  }, [period, customRangeDurationHours, timezone, timeFormat])
+
   // Calculate average temperature for reference line
   const validData = data.filter(p => p.temperature !== null && p.temperature !== undefined)
   const avgTemp = validData.length > 0
@@ -58,7 +80,7 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+      <LineChart data={data} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
         <defs>
           <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={chartColors.temperature.stroke} stopOpacity={0.2} />
@@ -76,13 +98,15 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
 
         <XAxis
           dataKey="timestamp"
-          tickFormatter={(value) => formatTimestamp(value, period)}
+          tickFormatter={tickFormatter}
           stroke={chartColors.text}
           fontSize={10}
           fontFamily="JetBrains Mono, monospace"
           tickLine={false}
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
+          interval="preserveStartEnd"
+          minTickGap={50}
         />
         <YAxis
           tickFormatter={(value) => `${value}°C`}
@@ -130,7 +154,7 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
           stroke={chartColors.temperature.stroke}
           strokeWidth={2}
           dot={false}
-          connectNulls={false}
+          connectNulls={true}
           activeDot={{
             r: 4,
             fill: chartColors.temperature.stroke,

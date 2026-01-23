@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import {
   AreaChart,
   Area,
@@ -9,31 +9,37 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
-import type { HistoryDataPoint, ChartPeriod } from '@/types/device'
+import type { HistoryDataPoint, ChartPeriod, DateRange } from '@/types/device'
 import { chartColors, formatTimestamp } from './chartConfig'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 interface BatteryChartProps {
   data: HistoryDataPoint[]
   period: ChartPeriod
   height?: number
+  customRange?: DateRange | null
 }
 
-// Custom tooltip component
+// Custom tooltip component with timezone support
 function CustomTooltip({ active, payload, label }: any) {
+  const { timezone, timeFormat } = useSettingsStore()
+
   if (!active || !payload || !payload.length) return null
 
   const value = payload[0]?.value
   const color = value <= 20 ? '#EF4444' : value <= 40 ? '#F59E0B' : '#10B981'
+  const hour12 = timeFormat === '12h'
 
   return (
     <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[120px]">
       <p className="text-[10px] text-muted-foreground font-mono mb-1">
         {new Date(label).toLocaleString('en-US', {
+          timeZone: timezone,
           month: 'short',
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          hour12: false
+          hour12
         })}
       </p>
       <div className="flex items-center gap-2">
@@ -48,7 +54,23 @@ function CustomTooltip({ active, payload, label }: any) {
   )
 }
 
-export const BatteryChart = memo(function BatteryChart({ data, period, height = 200 }: BatteryChartProps) {
+export const BatteryChart = memo(function BatteryChart({ data, period, height = 200, customRange }: BatteryChartProps) {
+  // Subscribe to settings store to re-render when timezone changes
+  const { timezone, timeFormat } = useSettingsStore()
+
+  // Calculate custom range duration in hours
+  const customRangeDurationHours = useMemo(() => {
+    if (period !== 'custom' || !customRange) return undefined
+    const from = new Date(customRange.from).getTime()
+    const to = new Date(customRange.to).getTime()
+    return (to - from) / (1000 * 60 * 60)
+  }, [period, customRange])
+
+  // Memoize the tick formatter to use current settings
+  const tickFormatter = useMemo(() => {
+    return (value: string) => formatTimestamp(value, period, customRangeDurationHours)
+  }, [period, customRangeDurationHours, timezone, timeFormat])
+
   // Calculate average for reference line
   const validData = data.filter(p => p.batterySoc !== null)
   const avgSoc = validData.length > 0
@@ -57,7 +79,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+      <AreaChart data={data} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
         <defs>
           <linearGradient id="socGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
@@ -79,13 +101,15 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
 
         <XAxis
           dataKey="timestamp"
-          tickFormatter={(value) => formatTimestamp(value, period)}
+          tickFormatter={tickFormatter}
           stroke={chartColors.text}
           fontSize={10}
           fontFamily="JetBrains Mono, monospace"
           tickLine={false}
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
+          interval="preserveStartEnd"
+          minTickGap={50}
         />
         <YAxis
           domain={[0, 100]}
@@ -135,7 +159,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
           stroke={chartColors.batterySoc.stroke}
           fill="url(#socGradient)"
           strokeWidth={2}
-          connectNulls={false}
+          connectNulls={true}
           dot={false}
           activeDot={{
             r: 4,

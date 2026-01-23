@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import {
   LineChart,
   Line,
@@ -10,8 +10,9 @@ import {
   Legend,
   ReferenceLine,
 } from 'recharts'
-import type { HistoryDataPoint, ChartPeriod } from '@/types/device'
+import type { HistoryDataPoint, ChartPeriod, DateRange } from '@/types/device'
 import { chartColors, formatTimestamp } from './chartConfig'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 interface PowerChartProps {
   data: HistoryDataPoint[]
@@ -19,6 +20,7 @@ interface PowerChartProps {
   height?: number
   showInputs?: boolean
   showOutputs?: boolean
+  customRange?: DateRange | null
 }
 
 const labels: Record<string, string> = {
@@ -28,26 +30,24 @@ const labels: Record<string, string> = {
   dcOutputWatts: 'DC Out',
 }
 
-const colors: Record<string, string> = {
-  acInputWatts: chartColors.acInput.stroke,
-  solarInputWatts: chartColors.solarInput.stroke,
-  acOutputWatts: chartColors.acOutput.stroke,
-  dcOutputWatts: chartColors.dcOutput.stroke,
-}
-
-// Custom tooltip component
+// Custom tooltip component with timezone support
 function CustomTooltip({ active, payload, label }: any) {
+  const { timezone, timeFormat } = useSettingsStore()
+
   if (!active || !payload || !payload.length) return null
+
+  const hour12 = timeFormat === '12h'
 
   return (
     <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[140px]">
       <p className="text-[10px] text-muted-foreground font-mono mb-1.5 pb-1.5 border-b border-border">
         {new Date(label).toLocaleString('en-US', {
+          timeZone: timezone,
           month: 'short',
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          hour12: false
+          hour12
         })}
       </p>
       <div className="space-y-1">
@@ -78,19 +78,36 @@ export const PowerChart = memo(function PowerChart({
   height = 200,
   showInputs = true,
   showOutputs = true,
+  customRange,
 }: PowerChartProps) {
-  // Calculate max power for reference
-  const maxInput = Math.max(
-    ...data.map(p => Math.max(p.acInputWatts || 0, p.solarInputWatts || 0))
-  )
-  const maxOutput = Math.max(
-    ...data.map(p => Math.max(p.acOutputWatts || 0, p.dcOutputWatts || 0))
-  )
+  // Subscribe to settings store to re-render when timezone changes
+  const { timezone, timeFormat } = useSettingsStore()
+
+  // Calculate custom range duration in hours
+  const customRangeDurationHours = useMemo(() => {
+    if (period !== 'custom' || !customRange) return undefined
+    const from = new Date(customRange.from).getTime()
+    const to = new Date(customRange.to).getTime()
+    return (to - from) / (1000 * 60 * 60)
+  }, [period, customRange])
+
+  // Memoize the tick formatter to use current settings
+  const tickFormatter = useMemo(() => {
+    return (value: string) => formatTimestamp(value, period, customRangeDurationHours)
+  }, [period, customRangeDurationHours, timezone, timeFormat])
+
+  // Calculate max power for reference (protect against empty arrays)
+  const maxInput = data.length > 0
+    ? Math.max(...data.map(p => Math.max(p.acInputWatts || 0, p.solarInputWatts || 0)))
+    : 0
+  const maxOutput = data.length > 0
+    ? Math.max(...data.map(p => Math.max(p.acOutputWatts || 0, p.dcOutputWatts || 0)))
+    : 0
   const peakPower = Math.max(maxInput, maxOutput)
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+      <LineChart data={data} margin={{ top: 10, right: 70, left: 0, bottom: 5 }}>
         <defs>
           {/* Gradient fills for potential area charts */}
           <linearGradient id="solarGradient" x1="0" y1="0" x2="0" y2="1">
@@ -109,13 +126,15 @@ export const PowerChart = memo(function PowerChart({
 
         <XAxis
           dataKey="timestamp"
-          tickFormatter={(value) => formatTimestamp(value, period)}
+          tickFormatter={tickFormatter}
           stroke={chartColors.text}
           fontSize={10}
           fontFamily="JetBrains Mono, monospace"
           tickLine={false}
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
+          interval="preserveStartEnd"
+          minTickGap={50}
         />
         <YAxis
           tickFormatter={(value) => `${value}W`}
@@ -164,7 +183,7 @@ export const PowerChart = memo(function PowerChart({
               stroke={chartColors.acInput.stroke}
               strokeWidth={2}
               dot={false}
-              connectNulls={false}
+              connectNulls={true}
               activeDot={{
                 r: 4,
                 fill: chartColors.acInput.stroke,
@@ -178,7 +197,7 @@ export const PowerChart = memo(function PowerChart({
               stroke={chartColors.solarInput.stroke}
               strokeWidth={2}
               dot={false}
-              connectNulls={false}
+              connectNulls={true}
               activeDot={{
                 r: 4,
                 fill: chartColors.solarInput.stroke,
@@ -196,7 +215,7 @@ export const PowerChart = memo(function PowerChart({
               stroke={chartColors.acOutput.stroke}
               strokeWidth={2}
               dot={false}
-              connectNulls={false}
+              connectNulls={true}
               activeDot={{
                 r: 4,
                 fill: chartColors.acOutput.stroke,
@@ -210,7 +229,7 @@ export const PowerChart = memo(function PowerChart({
               stroke={chartColors.dcOutput.stroke}
               strokeWidth={2}
               dot={false}
-              connectNulls={false}
+              connectNulls={true}
               activeDot={{
                 r: 4,
                 fill: chartColors.dcOutput.stroke,

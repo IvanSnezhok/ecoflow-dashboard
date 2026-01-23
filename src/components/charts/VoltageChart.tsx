@@ -10,8 +10,9 @@ import {
   Legend,
   ReferenceLine,
 } from 'recharts'
-import type { HistoryDataPoint, ChartPeriod } from '@/types/device'
+import type { HistoryDataPoint, ChartPeriod, DateRange } from '@/types/device'
 import { chartColors, formatTimestamp } from './chartConfig'
+import { useSettingsStore } from '@/stores/settingsStore'
 
 interface VoltageChartProps {
   data: HistoryDataPoint[]
@@ -20,6 +21,7 @@ interface VoltageChartProps {
   showMainBattery?: boolean
   showExtraBattery1?: boolean
   showExtraBattery2?: boolean
+  customRange?: DateRange | null
 }
 
 const legendLabels: Record<string, string> = {
@@ -28,25 +30,24 @@ const legendLabels: Record<string, string> = {
   extraBattery2VolV: 'Extra Battery 2',
 }
 
-const colors: Record<string, string> = {
-  bmsMasterVolV: chartColors.voltage.stroke,
-  extraBattery1VolV: chartColors.extraBattery1.stroke,
-  extraBattery2VolV: chartColors.extraBattery2.stroke,
-}
-
-// Custom tooltip component
+// Custom tooltip component with timezone support
 function CustomTooltip({ active, payload, label }: any) {
+  const { timezone, timeFormat } = useSettingsStore()
+
   if (!active || !payload || !payload.length) return null
+
+  const hour12 = timeFormat === '12h'
 
   return (
     <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[150px]">
       <p className="text-[10px] text-muted-foreground font-mono mb-1.5 pb-1.5 border-b border-border">
         {new Date(label).toLocaleString('en-US', {
+          timeZone: timezone,
           month: 'short',
           day: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          hour12: false
+          hour12
         })}
       </p>
       <div className="space-y-1">
@@ -78,7 +79,24 @@ export const VoltageChart = memo(function VoltageChart({
   showMainBattery = true,
   showExtraBattery1 = false,
   showExtraBattery2 = false,
+  customRange,
 }: VoltageChartProps) {
+  // Subscribe to settings store to re-render when timezone changes
+  const { timezone, timeFormat } = useSettingsStore()
+
+  // Calculate custom range duration in hours
+  const customRangeDurationHours = useMemo(() => {
+    if (period !== 'custom' || !customRange) return undefined
+    const from = new Date(customRange.from).getTime()
+    const to = new Date(customRange.to).getTime()
+    return (to - from) / (1000 * 60 * 60)
+  }, [period, customRange])
+
+  // Memoize the tick formatter to use current settings
+  const tickFormatter = useMemo(() => {
+    return (value: string) => formatTimestamp(value, period, customRangeDurationHours)
+  }, [period, customRangeDurationHours, timezone, timeFormat])
+
   // Convert mV to V for display
   const formattedData = useMemo(() => {
     return data.map(point => ({
@@ -97,7 +115,7 @@ export const VoltageChart = memo(function VoltageChart({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={formattedData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+      <LineChart data={formattedData} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
         {/* Dotted grid */}
         <CartesianGrid
           strokeDasharray="2 4"
@@ -108,13 +126,15 @@ export const VoltageChart = memo(function VoltageChart({
 
         <XAxis
           dataKey="timestamp"
-          tickFormatter={(value) => formatTimestamp(value, period)}
+          tickFormatter={tickFormatter}
           stroke={chartColors.text}
           fontSize={10}
           fontFamily="JetBrains Mono, monospace"
           tickLine={false}
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
+          interval="preserveStartEnd"
+          minTickGap={50}
         />
         <YAxis
           domain={['dataMin - 1', 'dataMax + 1']}
@@ -164,7 +184,7 @@ export const VoltageChart = memo(function VoltageChart({
             stroke={chartColors.voltage.stroke}
             strokeWidth={2}
             dot={false}
-            connectNulls={false}
+            connectNulls={true}
             activeDot={{
               r: 4,
               fill: chartColors.voltage.stroke,
@@ -181,7 +201,7 @@ export const VoltageChart = memo(function VoltageChart({
             stroke={chartColors.extraBattery1.stroke}
             strokeWidth={2}
             dot={false}
-            connectNulls={false}
+            connectNulls={true}
             activeDot={{
               r: 4,
               fill: chartColors.extraBattery1.stroke,
@@ -198,7 +218,7 @@ export const VoltageChart = memo(function VoltageChart({
             stroke={chartColors.extraBattery2.stroke}
             strokeWidth={2}
             dot={false}
-            connectNulls={false}
+            connectNulls={true}
             activeDot={{
               r: 4,
               fill: chartColors.extraBattery2.stroke,

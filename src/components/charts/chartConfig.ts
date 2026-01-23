@@ -51,9 +51,9 @@ export const periodLabels: Record<string, string> = {
 }
 
 // Legacy function for backward compatibility (uses store internally)
-export const formatTimestamp = (timestamp: string, period: string): string => {
+export const formatTimestamp = (timestamp: string, period: string, customRangeDurationHours?: number): string => {
   const { timezone, timeFormat } = useSettingsStore.getState()
-  return formatTimestampWithSettings(timestamp, period, timezone, timeFormat)
+  return formatTimestampWithSettings(timestamp, period, timezone, timeFormat, customRangeDurationHours)
 }
 
 // Pure function for use in components with settings passed explicitly
@@ -61,7 +61,8 @@ export const formatTimestampWithSettings = (
   timestamp: string,
   period: string,
   timezone: string,
-  timeFormat: TimeFormat
+  timeFormat: TimeFormat,
+  customRangeDurationHours?: number
 ): string => {
   const date = new Date(timestamp)
   const hour12 = timeFormat === '12h'
@@ -89,8 +90,52 @@ export const formatTimestampWithSettings = (
         day: 'numeric',
         month: 'short',
       })
+    case 'custom':
+      // For custom range, adapt format based on duration
+      if (customRangeDurationHours !== undefined) {
+        if (customRangeDurationHours <= 2) {
+          // Very short: only time HH:MM
+          return date.toLocaleTimeString('en-US', {
+            timeZone: timezone,
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12,
+          })
+        } else if (customRangeDurationHours <= 24) {
+          // Up to 1 day: HH:MM
+          return date.toLocaleTimeString('en-US', {
+            timeZone: timezone,
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12,
+          })
+        } else if (customRangeDurationHours <= 168) {
+          // Up to 1 week: Day HH:MM
+          return date.toLocaleDateString('en-US', {
+            timeZone: timezone,
+            weekday: 'short',
+            hour: '2-digit',
+            hour12,
+          })
+        } else {
+          // Longer: Month Day
+          return date.toLocaleDateString('en-US', {
+            timeZone: timezone,
+            day: 'numeric',
+            month: 'short',
+          })
+        }
+      }
+      // Fallback for custom without duration info
+      return date.toLocaleString('en-US', {
+        timeZone: timezone,
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12,
+      })
     default:
-      // For custom range, auto-detect best format
       return date.toLocaleString('en-US', {
         timeZone: timezone,
         month: 'short',
