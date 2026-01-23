@@ -1,25 +1,21 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft,
-  Plug,
-  Sun,
   Zap,
   Battery,
-  Thermometer,
   Power,
-  Loader2,
-  BatteryCharging,
   BarChart3,
   ExternalLink,
   Clock,
-  Cpu,
   Settings,
   AlertTriangle,
 } from "lucide-react";
 import { useDeviceStore } from "@/stores/deviceStore";
-import { BatteryGauge } from "@/components/devices/BatteryGauge";
-import { ExtraBatteryCard } from "@/components/devices/ExtraBatteryCard";
+import { EnergyFlowDiagram } from "@/components/devices/EnergyFlowDiagram";
+import { BatteryPack } from "@/components/devices/BatteryPack";
+import { TechnicalToggle } from "@/components/ui/TechnicalToggle";
+import { TechnicalSlider } from "@/components/ui/TechnicalSlider";
 import {
   BatteryChart,
   PowerChart,
@@ -62,242 +58,10 @@ function hasErrors(errorCodes: DeviceErrorCodes | LastKnownErrors): boolean {
   return hasBaseErrors;
 }
 
-// Power flow card component
-function PowerFlowCard({
-  icon,
-  label,
-  value,
-  colorClass,
-  bgClass,
-  isActive,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  colorClass: string;
-  bgClass: string;
-  isActive: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "p-4 rounded-xl transition-all duration-300",
-        "border border-transparent",
-        isActive ? bgClass : "bg-muted/30",
-        isActive && "border-current/10 shadow-sm",
-      )}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <div
-          className={cn(
-            "p-1.5 rounded-lg transition-colors duration-300",
-            isActive ? colorClass : "bg-muted",
-          )}
-        >
-          {icon}
-        </div>
-        <span className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
-          {label}
-        </span>
-      </div>
-      <div
-        className={cn(
-          "text-2xl font-bold tabular-nums transition-colors duration-300",
-          isActive && "text-foreground",
-        )}
-      >
-        {value}
-        <span className="text-sm font-normal text-muted-foreground ml-1">
-          W
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// Toggle switch component
-function ToggleSwitch({
-  label,
-  description,
-  enabled,
-  isLoading,
-  disabled,
-  onToggle,
-}: {
-  label: string;
-  description: string;
-  enabled: boolean;
-  isLoading: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      disabled={isLoading || disabled}
-      className={cn(
-        "w-full flex items-center justify-between p-4 rounded-xl",
-        "transition-all duration-300",
-        "hover:bg-muted/60 active:scale-[0.99]",
-        "disabled:opacity-50 disabled:cursor-not-allowed",
-        enabled
-          ? "bg-primary/5 border border-primary/20"
-          : "bg-muted/30 border border-transparent",
-      )}
-    >
-      <div className="text-left">
-        <div className="font-medium">{label}</div>
-        <div className="text-sm text-muted-foreground">
-          {isLoading ? "Switching..." : description}
-        </div>
-      </div>
-      <div
-        className={cn(
-          "w-14 h-7 rounded-full transition-all duration-300 relative",
-          "shadow-inner",
-          enabled ? "bg-primary" : "bg-muted-foreground/30",
-        )}
-      >
-        {isLoading ? (
-          <Loader2 className="w-5 h-5 absolute top-1 left-1/2 -translate-x-1/2 text-white animate-spin" />
-        ) : (
-          <div
-            className={cn(
-              "w-5 h-5 rounded-full bg-white shadow-md",
-              "transform transition-all duration-300",
-              "absolute top-1",
-              enabled ? "left-8" : "left-1",
-            )}
-          />
-        )}
-      </div>
-    </button>
-  );
-}
-
-// Slider control component
-function SliderControl({
-  label,
-  value,
-  min,
-  max,
-  step,
-  unit,
-  isLoading,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  unit: string;
-  isLoading: boolean;
-  disabled: boolean;
-  onChange: (value: number) => void;
-}) {
-  const [localValue, setLocalValue] = useState(value);
-  const [isDragging, setIsDragging] = useState(false);
-  const pendingValueRef = useRef<number | null>(null);
-
-  // Sync local value with prop when not dragging
-  useEffect(() => {
-    if (!isDragging) {
-      setLocalValue(value);
-    }
-  }, [value, isDragging]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = Number(e.target.value);
-    setLocalValue(newValue);
-    pendingValueRef.current = newValue;
-  };
-
-  const commitChange = () => {
-    const pendingValue = pendingValueRef.current;
-    if (pendingValue !== null && pendingValue !== value) {
-      onChange(pendingValue);
-    }
-    pendingValueRef.current = null;
-    setIsDragging(false);
-  };
-
-  const handlePointerDown = () => {
-    setIsDragging(true);
-  };
-
-  const percentage = ((localValue - min) / (max - min)) * 100;
-
-  return (
-    <div
-      className={cn(
-        "p-4 rounded-xl bg-muted/30 border border-transparent",
-        "transition-all duration-300",
-        disabled && "opacity-50",
-      )}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium">{label}</span>
-        <div className="flex items-center gap-2">
-          {isLoading && (
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-          )}
-          <span className="text-lg font-bold tabular-nums">
-            {localValue}
-            <span className="text-sm font-normal text-muted-foreground ml-1">
-              {unit}
-            </span>
-          </span>
-        </div>
-      </div>
-      <div className="relative h-6 flex items-center">
-        {/* Track background */}
-        <div className="absolute w-full h-2 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full bg-primary transition-all duration-100"
-            style={{ width: `${percentage}%` }}
-          />
-        </div>
-        {/* Thumb */}
-        <div
-          className="absolute w-5 h-5 bg-white border-2 border-primary rounded-full shadow-md transition-all duration-100 pointer-events-none"
-          style={{ left: `calc(${percentage}% - 10px)` }}
-        />
-        {/* Input */}
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={localValue}
-          onChange={handleChange}
-          onPointerDown={handlePointerDown}
-          onPointerUp={commitChange}
-          onBlur={commitChange}
-          disabled={disabled || isLoading}
-          className="absolute w-full h-6 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-        />
-      </div>
-      <div className="flex justify-between text-xs text-muted-foreground mt-2">
-        <span>
-          {min}
-          {unit}
-        </span>
-        <span>
-          {max}
-          {unit}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 export default function DeviceDetail() {
   const { serialNumber } = useParams<{ serialNumber: string }>();
   const { devices, updateDeviceState, setPendingCommand, removePendingCommand } = useDeviceStore();
   const [isTogglingAc, setIsTogglingAc] = useState(false);
-  const [isTogglingDc, setIsTogglingDc] = useState(false);
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("24h");
 
   // Charge settings states
@@ -336,32 +100,6 @@ export default function DeviceDetail() {
       );
     } finally {
       setIsTogglingAc(false);
-    }
-  };
-
-  const handleToggleDc = async () => {
-    if (!device?.state || isTogglingDc) return;
-
-    setIsTogglingDc(true);
-    const newState = !device.state.dcOutEnabled;
-
-    // Set pending command before optimistic update
-    setPendingCommand(device.serialNumber, 'dcOutEnabled', newState);
-    updateDeviceState(device.serialNumber, { dcOutEnabled: newState });
-
-    try {
-      await api.setDcOutput(device.serialNumber, newState);
-    } catch (error) {
-      console.error("Failed to toggle DC output:", error);
-      // Remove pending on error and revert
-      removePendingCommand(device.serialNumber, 'dcOutEnabled');
-      updateDeviceState(device.serialNumber, { dcOutEnabled: !newState });
-      alert(
-        "Failed to toggle DC output: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
-    } finally {
-      setIsTogglingDc(false);
     }
   };
 
@@ -468,44 +206,41 @@ export default function DeviceDetail() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
+      {/* Header - Minimalist */}
+      <div className="flex items-center gap-3">
         <Link
           to="/"
-          className={cn(
-            "inline-flex items-center justify-center w-10 h-10 rounded-xl",
-            "border bg-card hover:bg-muted transition-colors",
-          )}
+          className="inline-flex items-center justify-center w-8 h-8 rounded-sm border bg-card hover:bg-muted transition-colors"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h2 className="text-2xl font-bold tracking-tight truncate">
-            {device.name || device.serialNumber}
-          </h2>
-          <p className="text-sm text-muted-foreground">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-lg font-semibold tracking-tight truncate">
+              {device.name || device.serialNumber}
+            </h2>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase",
+              device.online
+                ? "bg-energy-green/10 text-energy-green"
+                : "bg-muted text-muted-foreground"
+            )}>
+              {device.online ? "ONLINE" : "OFFLINE"}
+            </span>
+          </div>
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
             {device.deviceType} • {device.serialNumber}
           </p>
         </div>
-        <div
-          className={cn(
-            "px-4 py-1.5 rounded-full text-sm font-medium shrink-0",
-            "transition-colors duration-300",
-            device.online
-              ? "bg-green-500/10 text-green-600 dark:text-green-400"
-              : "bg-muted text-muted-foreground",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block w-2 h-2 rounded-full mr-2",
-              device.online
-                ? "bg-green-500 animate-pulse"
-                : "bg-muted-foreground",
-            )}
-          />
-          {device.online ? "Online" : "Offline"}
-        </div>
+        {/* Last sync time */}
+        {state && (
+          <div className="text-right hidden sm:block">
+            <span className="text-[10px] text-muted-foreground">Last sync</span>
+            <p className="text-xs font-mono">
+              {new Date(state.timestamp).toLocaleTimeString("en-US", { hour12: false })}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Error Alerts - show current errors or last known errors for offline devices */}
@@ -634,336 +369,185 @@ export default function DeviceDetail() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Battery Status - spans 1 column */}
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/50 bg-muted/20">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Battery className="w-5 h-5 text-primary" />
-              Battery Status
-            </h3>
-          </div>
-          <div className="p-6">
-            {state ? (
-              <div className="flex flex-col items-center">
-                <BatteryGauge
-                  soc={state.batterySoc}
-                  isCharging={isCharging}
-                  size="lg"
-                />
-                <div className="mt-4 text-center">
-                  <div
-                    className={cn(
-                      "inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium",
-                      isCharging
-                        ? "bg-green-500/10 text-green-600"
-                        : isDischarging
-                          ? "bg-orange-500/10 text-orange-600"
-                          : "bg-muted text-muted-foreground",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "w-2 h-2 rounded-full",
-                        isCharging
-                          ? "bg-green-500"
-                          : isDischarging
-                            ? "bg-orange-500"
-                            : "bg-muted-foreground",
-                      )}
-                    />
-                    {isCharging
-                      ? "Charging"
-                      : isDischarging
-                        ? "Discharging"
-                        : "Idle"}
-                  </div>
-                  {/* ETA display */}
-                  {isCharging &&
-                    state.chgRemainTime &&
-                    state.chgRemainTime > 0 && (
-                      <div className="mt-2 text-sm text-muted-foreground">
-                        <Clock className="w-3.5 h-3.5 inline mr-1" />
-                        {state.chgRemainTime >= 60
-                          ? `${Math.floor(state.chgRemainTime / 60)}h ${state.chgRemainTime % 60}min to 100%`
-                          : `${state.chgRemainTime}min to 100%`}
-                      </div>
-                    )}
-                  {isDischarging &&
-                    state.dsgRemainTime &&
-                    state.dsgRemainTime > 0 && (
-                      <div className="mt-2 text-sm text-muted-foreground">
-                        <Clock className="w-3.5 h-3.5 inline mr-1" />
-                        {state.dsgRemainTime >= 60
-                          ? `${Math.floor(state.dsgRemainTime / 60)}h ${state.dsgRemainTime % 60}min remaining`
-                          : `${state.dsgRemainTime}min remaining`}
-                      </div>
-                    )}
-                </div>
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                No data available
-              </p>
-            )}
-          </div>
-        </div>
+      {/* Energy Flow Diagram - Full Width */}
+      {state && (
+        <EnergyFlowDiagram
+          solarInput={state.solarInputWatts}
+          acInput={state.acInputWatts}
+          acOutput={state.acOutputWatts}
+          batterySoc={state.batterySoc}
+          isCharging={isCharging}
+          isDischarging={isDischarging}
+        />
+      )}
 
-        {/* Power Flow - spans 2 columns */}
-        <div className="lg:col-span-2 rounded-xl border bg-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/50 bg-muted/20">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Zap className="w-5 h-5 text-primary" />
-              Power Flow
-            </h3>
-          </div>
-          <div className="p-5">
-            {state ? (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <PowerFlowCard
-                  icon={<Plug className="w-4 h-4 text-purple-500" />}
-                  label="AC Input"
-                  value={state.acInputWatts}
-                  colorClass="bg-purple-500/20"
-                  bgClass="bg-purple-500/5"
-                  isActive={state.acInputWatts > 0}
-                />
-                <PowerFlowCard
-                  icon={<Sun className="w-4 h-4 text-amber-500" />}
-                  label="Solar"
-                  value={state.solarInputWatts}
-                  colorClass="bg-amber-500/20"
-                  bgClass="bg-amber-500/5"
-                  isActive={state.solarInputWatts > 0}
-                />
-                <PowerFlowCard
-                  icon={<Zap className="w-4 h-4 text-blue-500" />}
-                  label="AC Output"
-                  value={state.acOutputWatts}
-                  colorClass="bg-blue-500/20"
-                  bgClass="bg-blue-500/5"
-                  isActive={state.acOutputWatts > 0}
-                />
-                <PowerFlowCard
-                  icon={<Battery className="w-4 h-4 text-cyan-500" />}
-                  label="DC Output"
-                  value={state.dcOutputWatts}
-                  colorClass="bg-cyan-500/20"
-                  bgClass="bg-cyan-500/5"
-                  isActive={state.dcOutputWatts > 0}
-                />
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                No data available
-              </p>
-            )}
-          </div>
-        </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Battery Pack - spans 1 column */}
+        {state && (
+          <BatteryPack
+            mainSoc={state.batterySoc}
+            mainIsCharging={isCharging}
+            mainTemp={state.temperature}
+            extraBattery1={state.extraBattery1}
+            extraBattery2={state.extraBattery2}
+          />
+        )}
 
-        {/* Controls */}
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/50 bg-muted/20">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Power className="w-5 h-5 text-primary" />
-              Controls
-            </h3>
+        {/* Controls - AC Output Only */}
+        <div className="rounded-sm border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+            <Power className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Controls</span>
           </div>
-          <div className="p-4 space-y-3">
+          <div className="p-4 space-y-4">
             {state ? (
               <>
-                <ToggleSwitch
-                  label="AC Output"
-                  description={state.acOutEnabled ? "Enabled" : "Disabled"}
-                  enabled={state.acOutEnabled}
-                  isLoading={isTogglingAc}
-                  disabled={!device.online}
-                  onToggle={handleToggleAc}
-                />
-                <ToggleSwitch
-                  label="DC Output"
-                  description={state.dcOutEnabled ? "Enabled" : "Disabled"}
-                  enabled={state.dcOutEnabled}
-                  isLoading={isTogglingDc}
-                  disabled={!device.online}
-                  onToggle={handleToggleDc}
-                />
+                {/* AC Output Toggle */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium">AC Output</span>
+                    <p className="text-[10px] text-muted-foreground">
+                      {isTogglingAc ? "Switching..." : state.acOutEnabled ? "Enabled" : "Disabled"}
+                    </p>
+                  </div>
+                  <TechnicalToggle
+                    checked={state.acOutEnabled}
+                    onChange={handleToggleAc}
+                    disabled={!device.online || isTogglingAc}
+                    size="md"
+                  />
+                </div>
+
+                {/* Status Info */}
+                <div className="pt-3 border-t border-border/50">
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-muted-foreground">Status</span>
+                      <p className={cn(
+                        "font-mono font-semibold",
+                        isCharging ? "text-energy-green" :
+                        isDischarging ? "text-energy-blue" :
+                        "text-muted-foreground"
+                      )}>
+                        {isCharging ? "CHARGING" : isDischarging ? "DISCHARGING" : "IDLE"}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Temp</span>
+                      <p className="font-mono font-semibold">{state.temperature}°C</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Time remaining */}
+                {(isCharging && state.chgRemainTime && state.chgRemainTime > 0) && (
+                  <div className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {state.chgRemainTime >= 60
+                      ? `${Math.floor(state.chgRemainTime / 60)}h ${state.chgRemainTime % 60}m to full`
+                      : `${state.chgRemainTime}m to full`}
+                  </div>
+                )}
+                {(isDischarging && state.dsgRemainTime && state.dsgRemainTime > 0) && (
+                  <div className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {state.dsgRemainTime >= 60
+                      ? `${Math.floor(state.dsgRemainTime / 60)}h ${state.dsgRemainTime % 60}m remaining`
+                      : `${state.dsgRemainTime}m remaining`}
+                  </div>
+                )}
               </>
             ) : (
-              <p className="text-center text-muted-foreground py-4">
-                No data available
+              <p className="text-center text-muted-foreground py-4 text-xs">
+                No data
               </p>
             )}
           </div>
         </div>
 
-        {/* Charge Settings - spans 2 columns */}
-        <div className="lg:col-span-2 rounded-xl border bg-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/50 bg-muted/20">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Settings className="w-5 h-5 text-primary" />
-              Charge Settings
-            </h3>
+        {/* Charge Settings - third column */}
+        <div className="rounded-sm border bg-card overflow-hidden">
+          <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
+            <Settings className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Charge Settings</span>
           </div>
           <div className="p-4">
             {state ? (
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-4">
                 <div>
-                  <SliderControl
+                  <TechnicalSlider
                     label="AC Charging Power"
                     value={state.acChargingPower ?? 1800}
                     min={200}
                     max={2900}
                     step={100}
                     unit="W"
-                    isLoading={isSettingChargePower}
-                    disabled={!device.online || !!state.fastChargingEnabled}
                     onChange={handleSetChargePower}
+                    disabled={!device.online || !!state.fastChargingEnabled || isSettingChargePower}
+                    accentColor="purple"
                   />
                   {state.fastChargingEnabled && (
-                    <p className="text-xs text-amber-500 mt-2 px-4">
-                      Fast charging enabled - power limit not available
+                    <p className="text-[10px] text-energy-yellow mt-2">
+                      Fast charging enabled
                     </p>
                   )}
                 </div>
-                <SliderControl
+                <TechnicalSlider
                   label="Max Charge Level"
                   value={state.maxChgSoc ?? 100}
                   min={50}
                   max={100}
                   step={1}
                   unit="%"
-                  isLoading={isSettingMaxSoc}
-                  disabled={!device.online}
                   onChange={handleSetMaxSoc}
+                  disabled={!device.online || isSettingMaxSoc}
+                  accentColor="green"
                 />
-                <SliderControl
+                <TechnicalSlider
                   label="Min Discharge Level"
                   value={state.minDsgSoc ?? 0}
                   min={0}
                   max={30}
                   step={1}
                   unit="%"
-                  isLoading={isSettingMinSoc}
-                  disabled={!device.online}
                   onChange={handleSetMinSoc}
+                  disabled={!device.online || isSettingMinSoc}
+                  accentColor="blue"
                 />
               </div>
             ) : (
-              <p className="text-center text-muted-foreground py-4">
-                No data available
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Device Info - spans 2 columns */}
-        <div className="lg:col-span-2 rounded-xl border bg-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/50 bg-muted/20">
-            <h3 className="font-semibold flex items-center gap-2">
-              <Cpu className="w-5 h-5 text-primary" />
-              Device Info
-            </h3>
-          </div>
-          <div className="p-5">
-            {state ? (
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-4 rounded-xl bg-muted/30">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Thermometer className="w-4 h-4 text-orange-500" />
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                      Temperature
-                    </span>
-                  </div>
-                  <div className="text-2xl font-bold tabular-nums">
-                    {state.temperature}
-                    <span className="text-sm font-normal text-muted-foreground ml-1">
-                      °C
-                    </span>
-                  </div>
-                </div>
-                <div className="p-4 rounded-xl bg-muted/30">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Clock className="w-4 h-4 text-blue-500" />
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                      Last Updated
-                    </span>
-                  </div>
-                  <div className="text-2xl font-bold tabular-nums">
-                    {new Date(state.timestamp).toLocaleTimeString("en-US", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })}
-                  </div>
-                </div>
-                <div className="p-4 rounded-xl bg-muted/30">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Cpu className="w-4 h-4 text-purple-500" />
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                      Device Type
-                    </span>
-                  </div>
-                  <div className="text-lg font-bold truncate">
-                    {device.deviceType}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-center text-muted-foreground py-8">
-                No data available
+              <p className="text-center text-muted-foreground py-4 text-xs">
+                No data
               </p>
             )}
           </div>
         </div>
       </div>
 
-      {/* Extra Batteries Section */}
-      {state && (state.extraBattery1 || state.extraBattery2) && (
-        <div className="space-y-4">
-          <h3 className="font-semibold flex items-center gap-2 text-lg">
-            <BatteryCharging className="w-5 h-5 text-primary" />
-            Extra Batteries
-          </h3>
-          <div className="grid gap-4 md:grid-cols-2">
-            {state.extraBattery1 && (
-              <ExtraBatteryCard battery={state.extraBattery1} index={1} />
-            )}
-            {state.extraBattery2 && (
-              <ExtraBatteryCard battery={state.extraBattery2} index={2} />
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Usage Charts Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <h3 className="font-semibold flex items-center gap-2 text-lg">
-            <BarChart3 className="w-5 h-5 text-primary" />
-            Usage Charts
-          </h3>
-          <div className="flex items-center gap-4">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Usage Charts
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
             <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
             <Link
               to={`/device/${serialNumber}/errors`}
-              className={cn(
-                "flex items-center gap-1.5 text-sm font-medium",
-                "text-orange-600 hover:text-orange-500 transition-colors",
-              )}
+              className="flex items-center gap-1 text-[10px] font-medium text-energy-yellow hover:text-energy-yellow/80 transition-colors"
             >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Error History
+              <AlertTriangle className="w-3 h-3" />
+              Errors
             </Link>
             <Link
               to={`/statistics/${serialNumber}`}
-              className={cn(
-                "flex items-center gap-1.5 text-sm font-medium",
-                "text-primary hover:text-primary/80 transition-colors",
-              )}
+              className="flex items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 transition-colors"
             >
-              Detailed Statistics
-              <ExternalLink className="w-3.5 h-3.5" />
+              Statistics
+              <ExternalLink className="w-3 h-3" />
             </Link>
           </div>
         </div>
@@ -971,7 +555,7 @@ export default function DeviceDetail() {
         <div className="grid gap-4 md:grid-cols-2">
           <ChartContainer
             title="Battery Level"
-            icon={<Battery className="w-4 h-4 text-green-500" />}
+            icon={<Battery className="w-4 h-4 text-energy-green" />}
             isLoading={isChartLoading}
             error={chartError}
             onRefresh={refetchChart}
@@ -982,7 +566,7 @@ export default function DeviceDetail() {
 
           <ChartContainer
             title="Power"
-            icon={<Zap className="w-4 h-4 text-blue-500" />}
+            icon={<Zap className="w-4 h-4 text-energy-blue" />}
             isLoading={isChartLoading}
             error={chartError}
             onRefresh={refetchChart}

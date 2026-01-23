@@ -6,6 +6,15 @@ import type {
   HistoryResponse,
   ErrorHistoryResponse,
 } from "@/types/device";
+import type {
+  AutomationRule,
+  AutomationLog,
+  SlackSettings,
+  CreateAutomationRuleDto,
+  UpdateAutomationRuleDto,
+  UpdateSlackSettingsDto,
+  RuleTestResult,
+} from "@/types/automation";
 
 const client = axios.create({
   baseURL: "/api",
@@ -71,4 +80,41 @@ export const api = {
     client.get<ErrorHistoryResponse>(`/devices/${serialNumber}/errors`, {
       params: { limit },
     }),
+
+  // Automation API
+  getAutomationRules: () =>
+    client.get<{ success: boolean; data: AutomationRule[] }>("/automation/rules"),
+
+  getAutomationRule: (id: number) =>
+    client.get<{ success: boolean; data: AutomationRule }>(`/automation/rules/${id}`),
+
+  createAutomationRule: (dto: CreateAutomationRuleDto) =>
+    client.post<{ success: boolean; data: AutomationRule }>("/automation/rules", dto),
+
+  updateAutomationRule: (id: number, dto: UpdateAutomationRuleDto) =>
+    client.put<{ success: boolean; data: AutomationRule }>(`/automation/rules/${id}`, dto),
+
+  deleteAutomationRule: (id: number) =>
+    client.delete<{ success: boolean }>(`/automation/rules/${id}`),
+
+  toggleAutomationRule: (id: number, enabled: boolean) =>
+    client.post<{ success: boolean; data: AutomationRule }>(`/automation/rules/${id}/toggle`, { enabled }),
+
+  testAutomationRule: (id: number, serialNumber: string) =>
+    client.post<{ success: boolean; data: RuleTestResult }>(`/automation/rules/${id}/test`, { serialNumber }),
+
+  clearRuleCooldown: (id: number) =>
+    client.post<{ success: boolean }>(`/automation/rules/${id}/clear-cooldown`),
+
+  getAutomationLogs: (params?: { ruleId?: number; deviceId?: number; limit?: number; offset?: number }) =>
+    client.get<{ success: boolean; data: AutomationLog[] }>("/automation/logs", { params }),
+
+  getSlackSettings: () =>
+    client.get<{ success: boolean; data: SlackSettings }>("/automation/slack"),
+
+  updateSlackSettings: (dto: UpdateSlackSettingsDto) =>
+    client.put<{ success: boolean; data: SlackSettings }>("/automation/slack", dto),
+
+  testSlackConnection: () =>
+    client.post<{ success: boolean; error?: string }>("/automation/slack/test"),
 };

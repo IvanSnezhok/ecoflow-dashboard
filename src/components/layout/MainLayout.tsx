@@ -12,7 +12,7 @@ export function MainLayout({ children }: MainLayoutProps) {
       <Header />
       <div className="flex">
         <Sidebar />
-        <main className="flex-1 p-6">
+        <main className="flex-1 p-4 bg-grid min-h-[calc(100vh-3rem)]">
           {children}
         </main>
       </div>

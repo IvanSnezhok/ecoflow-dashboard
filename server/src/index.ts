@@ -15,8 +15,10 @@ import {
 } from "./db/database.js";
 import { mqttService } from "./services/mqttService.js";
 import { ecoflowApi } from "./services/ecoflowApi.js";
+import { processDeviceAutomation, buildDeviceMetrics } from "./services/automationEngine.js";
 import devicesRouter from "./routes/devices.js";
 import logsRouter from "./routes/logs.js";
+import { automationRouter } from "./routes/automation.js";
 
 const app = express();
 const server = createServer(app);
@@ -57,6 +59,7 @@ app.use("/api/devices/:sn/charge-limit", controlLimiter);
 // Routes
 app.use("/api/devices", devicesRouter);
 app.use("/api/logs", logsRouter);
+app.use("/api/automation", automationRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -206,6 +209,22 @@ server.listen(PORT, async () => {
                 0,
               rawData: JSON.stringify(quota),
             });
+
+            // Process automation rules for this device
+            try {
+              const metrics = buildDeviceMetrics(
+                deviceId,
+                device.sn,
+                device.online === 1,
+                q,
+              );
+              await processDeviceAutomation(metrics);
+            } catch (automationErr) {
+              console.error(
+                `Automation error for ${device.sn}:`,
+                automationErr,
+              );
+            }
           } catch (err) {
             // Quota fetch failed - device might be temporarily unreachable
           }

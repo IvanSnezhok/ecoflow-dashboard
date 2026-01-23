@@ -24,32 +24,28 @@ export function ChartContainer({
 }: ChartContainerProps) {
   return (
     <div className={cn(
-      'rounded-xl border bg-card overflow-hidden',
-      'transition-all duration-300',
-      'hover:shadow-lg hover:border-border/80',
+      'rounded-sm border bg-card overflow-hidden',
       className
     )}>
       {/* Header */}
-      <div className="px-4 py-3 flex items-center justify-between border-b border-border/50 bg-muted/20">
-        <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-lg bg-background">
-            {icon || <BarChart3 className="w-4 h-4 text-muted-foreground" />}
-          </div>
-          <h3 className="font-semibold text-sm">{title}</h3>
+      <div className="px-4 py-3 flex items-center justify-between border-b bg-muted/30">
+        <div className="flex items-center gap-2">
+          {icon || <BarChart3 className="w-4 h-4 text-primary" />}
+          <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
         </div>
         {onRefresh && (
           <button
             onClick={onRefresh}
             disabled={isLoading}
             className={cn(
-              'p-1.5 rounded-lg transition-all duration-200',
-              'hover:bg-muted active:scale-95',
+              'p-1 rounded-sm transition-colors',
+              'hover:bg-muted',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
             title="Refresh"
           >
             <RefreshCw className={cn(
-              'w-4 h-4 text-muted-foreground',
+              'w-3.5 h-3.5 text-muted-foreground',
               isLoading && 'animate-spin text-primary'
             )} />
           </button>

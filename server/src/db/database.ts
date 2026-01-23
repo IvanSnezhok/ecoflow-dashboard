@@ -55,6 +55,51 @@ export function initDatabase(): void {
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
 
+    -- Automation rules table
+    CREATE TABLE IF NOT EXISTS automation_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      device_id INTEGER,
+      enabled INTEGER DEFAULT 1,
+      conditions TEXT NOT NULL,
+      actions TEXT NOT NULL,
+      cooldown_seconds INTEGER DEFAULT 300,
+      priority INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_triggered_at TEXT,
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
+    -- Automation execution logs
+    CREATE TABLE IF NOT EXISTS automation_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id INTEGER NOT NULL,
+      rule_name TEXT,
+      device_id INTEGER,
+      device_serial TEXT,
+      trigger_details TEXT,
+      actions_executed TEXT,
+      success INTEGER NOT NULL,
+      error_message TEXT,
+      execution_time_ms INTEGER,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (rule_id) REFERENCES automation_rules(id),
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
+    -- Slack integration settings
+    CREATE TABLE IF NOT EXISTS slack_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      webhook_url TEXT,
+      incoming_secret TEXT,
+      default_channel TEXT,
+      enabled INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Create indexes
     CREATE INDEX IF NOT EXISTS idx_device_states_device_timestamp
       ON device_states(device_id, timestamp);
@@ -62,6 +107,14 @@ export function initDatabase(): void {
       ON operation_logs(device_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_operation_logs_type
       ON operation_logs(operation_type);
+    CREATE INDEX IF NOT EXISTS idx_automation_rules_enabled
+      ON automation_rules(enabled);
+    CREATE INDEX IF NOT EXISTS idx_automation_rules_device
+      ON automation_rules(device_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_logs_rule
+      ON automation_logs(rule_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_logs_timestamp
+      ON automation_logs(timestamp);
   `)
 
   // Run migrations for new columns
@@ -528,4 +581,264 @@ export function cleanupOldData(retentionDays: number = 30): void {
   db.prepare('DELETE FROM operation_logs WHERE timestamp < ?').run(cutoff)
 
   console.log(`Cleaned up data older than ${retentionDays} days`)
+}
+
+// ==================== Automation Rules ====================
+
+import type {
+  AutomationRuleRow,
+  AutomationLogRow,
+  SlackSettingsRow,
+  CreateAutomationRuleDto,
+  UpdateAutomationRuleDto,
+  UpdateSlackSettingsDto,
+} from '../types/automation.js'
+
+export function getAllAutomationRules(): AutomationRuleRow[] {
+  return db.prepare(`
+    SELECT * FROM automation_rules
+    ORDER BY priority DESC, created_at ASC
+  `).all() as AutomationRuleRow[]
+}
+
+export function getEnabledAutomationRules(): AutomationRuleRow[] {
+  return db.prepare(`
+    SELECT * FROM automation_rules
+    WHERE enabled = 1
+    ORDER BY priority DESC, created_at ASC
+  `).all() as AutomationRuleRow[]
+}
+
+export function getAutomationRuleById(id: number): AutomationRuleRow | undefined {
+  return db.prepare(`
+    SELECT * FROM automation_rules WHERE id = ?
+  `).get(id) as AutomationRuleRow | undefined
+}
+
+export function getAutomationRulesForDevice(deviceId: number): AutomationRuleRow[] {
+  return db.prepare(`
+    SELECT * FROM automation_rules
+    WHERE enabled = 1 AND (device_id IS NULL OR device_id = ?)
+    ORDER BY priority DESC, created_at ASC
+  `).all(deviceId) as AutomationRuleRow[]
+}
+
+export function createAutomationRule(dto: CreateAutomationRuleDto): number {
+  const stmt = db.prepare(`
+    INSERT INTO automation_rules (
+      name, description, device_id, enabled,
+      conditions, actions, cooldown_seconds, priority
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING id
+  `)
+  const result = stmt.get(
+    dto.name,
+    dto.description ?? null,
+    dto.deviceId ?? null,
+    dto.enabled !== false ? 1 : 0,
+    JSON.stringify(dto.conditions),
+    JSON.stringify(dto.actions),
+    dto.cooldownSeconds ?? 300,
+    dto.priority ?? 0
+  ) as { id: number }
+  return result.id
+}
+
+export function updateAutomationRule(id: number, dto: UpdateAutomationRuleDto): boolean {
+  const updates: string[] = []
+  const params: (string | number | null)[] = []
+
+  if (dto.name !== undefined) {
+    updates.push('name = ?')
+    params.push(dto.name)
+  }
+  if (dto.description !== undefined) {
+    updates.push('description = ?')
+    params.push(dto.description)
+  }
+  if (dto.deviceId !== undefined) {
+    updates.push('device_id = ?')
+    params.push(dto.deviceId)
+  }
+  if (dto.enabled !== undefined) {
+    updates.push('enabled = ?')
+    params.push(dto.enabled ? 1 : 0)
+  }
+  if (dto.conditions !== undefined) {
+    updates.push('conditions = ?')
+    params.push(JSON.stringify(dto.conditions))
+  }
+  if (dto.actions !== undefined) {
+    updates.push('actions = ?')
+    params.push(JSON.stringify(dto.actions))
+  }
+  if (dto.cooldownSeconds !== undefined) {
+    updates.push('cooldown_seconds = ?')
+    params.push(dto.cooldownSeconds)
+  }
+  if (dto.priority !== undefined) {
+    updates.push('priority = ?')
+    params.push(dto.priority)
+  }
+
+  if (updates.length === 0) return false
+
+  updates.push('updated_at = CURRENT_TIMESTAMP')
+  params.push(id)
+
+  const result = db.prepare(`
+    UPDATE automation_rules
+    SET ${updates.join(', ')}
+    WHERE id = ?
+  `).run(...params)
+
+  return result.changes > 0
+}
+
+export function deleteAutomationRule(id: number): boolean {
+  const result = db.prepare('DELETE FROM automation_rules WHERE id = ?').run(id)
+  return result.changes > 0
+}
+
+export function toggleAutomationRule(id: number, enabled: boolean): boolean {
+  const result = db.prepare(`
+    UPDATE automation_rules
+    SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(enabled ? 1 : 0, id)
+  return result.changes > 0
+}
+
+export function updateRuleLastTriggered(id: number): void {
+  db.prepare(`
+    UPDATE automation_rules
+    SET last_triggered_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(id)
+}
+
+// ==================== Automation Logs ====================
+
+export function insertAutomationLog(log: {
+  ruleId: number
+  ruleName?: string
+  deviceId?: number
+  deviceSerial?: string
+  triggerDetails?: Record<string, unknown>
+  actionsExecuted: unknown[]
+  success: boolean
+  errorMessage?: string
+  executionTimeMs?: number
+}): number {
+  const stmt = db.prepare(`
+    INSERT INTO automation_logs (
+      rule_id, rule_name, device_id, device_serial,
+      trigger_details, actions_executed, success,
+      error_message, execution_time_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    RETURNING id
+  `)
+  const result = stmt.get(
+    log.ruleId,
+    log.ruleName ?? null,
+    log.deviceId ?? null,
+    log.deviceSerial ?? null,
+    log.triggerDetails ? JSON.stringify(log.triggerDetails) : null,
+    JSON.stringify(log.actionsExecuted),
+    log.success ? 1 : 0,
+    log.errorMessage ?? null,
+    log.executionTimeMs ?? null
+  ) as { id: number }
+  return result.id
+}
+
+export function getAutomationLogs(options: {
+  ruleId?: number
+  deviceId?: number
+  limit?: number
+  offset?: number
+}): AutomationLogRow[] {
+  const { ruleId, deviceId, limit = 100, offset = 0 } = options
+
+  let query = 'SELECT * FROM automation_logs WHERE 1=1'
+  const params: (number | string)[] = []
+
+  if (ruleId !== undefined) {
+    query += ' AND rule_id = ?'
+    params.push(ruleId)
+  }
+  if (deviceId !== undefined) {
+    query += ' AND device_id = ?'
+    params.push(deviceId)
+  }
+
+  query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?'
+  params.push(limit, offset)
+
+  return db.prepare(query).all(...params) as AutomationLogRow[]
+}
+
+export function cleanupAutomationLogs(retentionDays: number = 30): void {
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - retentionDays)
+  const cutoff = cutoffDate.toISOString()
+
+  db.prepare('DELETE FROM automation_logs WHERE timestamp < ?').run(cutoff)
+}
+
+// ==================== Slack Settings ====================
+
+export function getSlackSettings(): SlackSettingsRow | undefined {
+  return db.prepare('SELECT * FROM slack_settings ORDER BY id LIMIT 1').get() as SlackSettingsRow | undefined
+}
+
+export function upsertSlackSettings(dto: UpdateSlackSettingsDto): number {
+  const existing = getSlackSettings()
+
+  if (existing) {
+    const updates: string[] = []
+    const params: (string | number | null)[] = []
+
+    if (dto.webhookUrl !== undefined) {
+      updates.push('webhook_url = ?')
+      params.push(dto.webhookUrl || null)
+    }
+    if (dto.incomingSecret !== undefined) {
+      updates.push('incoming_secret = ?')
+      params.push(dto.incomingSecret || null)
+    }
+    if (dto.defaultChannel !== undefined) {
+      updates.push('default_channel = ?')
+      params.push(dto.defaultChannel || null)
+    }
+    if (dto.enabled !== undefined) {
+      updates.push('enabled = ?')
+      params.push(dto.enabled ? 1 : 0)
+    }
+
+    if (updates.length > 0) {
+      updates.push('updated_at = CURRENT_TIMESTAMP')
+      params.push(existing.id)
+      db.prepare(`
+        UPDATE slack_settings
+        SET ${updates.join(', ')}
+        WHERE id = ?
+      `).run(...params)
+    }
+
+    return existing.id
+  } else {
+    const stmt = db.prepare(`
+      INSERT INTO slack_settings (webhook_url, incoming_secret, default_channel, enabled)
+      VALUES (?, ?, ?, ?)
+      RETURNING id
+    `)
+    const result = stmt.get(
+      dto.webhookUrl || null,
+      dto.incomingSecret || null,
+      dto.defaultChannel || null,
+      dto.enabled ? 1 : 0
+    ) as { id: number }
+    return result.id
+  }
 }

@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import DeviceDetail from './pages/DeviceDetail'
 import Statistics from './pages/Statistics'
 import ErrorHistory from './pages/ErrorHistory'
+import Automation from './pages/Automation'
 import Logs from './pages/Logs'
 import Settings from './pages/Settings'
 import { useDevices } from './hooks/useDevices'
@@ -38,6 +39,7 @@ function App() {
               <Route path="/device/:serialNumber" element={<DeviceDetail />} />
               <Route path="/device/:serialNumber/errors" element={<ErrorHistory />} />
               <Route path="/statistics/:serialNumber" element={<Statistics />} />
+              <Route path="/automation" element={<Automation />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>

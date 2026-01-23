@@ -7,6 +7,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts'
 import type { HistoryDataPoint, ChartPeriod } from '@/types/device'
 import { chartColors, formatTimestamp } from './chartConfig'
@@ -17,42 +18,125 @@ interface TemperatureChartProps {
   height?: number
 }
 
+// Custom tooltip component
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload || !payload.length) return null
+
+  const value = payload[0]?.value
+  // Color based on temperature: normal (green) < 35°C, warm (yellow) 35-45°C, hot (red) > 45°C
+  const color = value >= 45 ? '#EF4444' : value >= 35 ? '#F59E0B' : '#10B981'
+
+  return (
+    <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[120px]">
+      <p className="text-[10px] text-muted-foreground font-mono mb-1">
+        {new Date(label).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        })}
+      </p>
+      <div className="flex items-center gap-2">
+        <span
+          className="w-2 h-2 rounded-sm"
+          style={{ backgroundColor: color }}
+        />
+        <span className="text-xs font-mono font-semibold">{value}°C</span>
+        <span className="text-[10px] text-muted-foreground">Temp</span>
+      </div>
+    </div>
+  )
+}
+
 export const TemperatureChart = memo(function TemperatureChart({ data, period, height = 200 }: TemperatureChartProps) {
+  // Calculate average temperature for reference line
+  const validData = data.filter(p => p.temperature !== null && p.temperature !== undefined)
+  const avgTemp = validData.length > 0
+    ? Math.round(validData.reduce((sum, p) => sum + (p.temperature || 0), 0) / validData.length)
+    : null
+
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 5, right: 5, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
+      <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+        <defs>
+          <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor={chartColors.temperature.stroke} stopOpacity={0.2} />
+            <stop offset="95%" stopColor={chartColors.temperature.stroke} stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+
+        {/* Dotted grid */}
+        <CartesianGrid
+          strokeDasharray="2 4"
+          stroke={chartColors.grid}
+          vertical={false}
+          strokeOpacity={0.7}
+        />
+
         <XAxis
           dataKey="timestamp"
           tickFormatter={(value) => formatTimestamp(value, period)}
           stroke={chartColors.text}
-          fontSize={11}
+          fontSize={10}
+          fontFamily="JetBrains Mono, monospace"
           tickLine={false}
-          axisLine={false}
+          axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
+          dy={5}
         />
         <YAxis
           tickFormatter={(value) => `${value}°C`}
           stroke={chartColors.text}
-          fontSize={11}
+          fontSize={10}
+          fontFamily="JetBrains Mono, monospace"
           tickLine={false}
           axisLine={false}
+          width={38}
         />
+
         <Tooltip
-          contentStyle={{
-            backgroundColor: 'hsl(var(--card))',
-            border: '1px solid hsl(var(--border))',
-            borderRadius: '8px',
-            fontSize: '12px',
-          }}
-          labelFormatter={(value) => new Date(value as string).toLocaleString('en-US')}
-          formatter={(value) => [`${value}°C`, 'Temperature']}
+          content={<CustomTooltip />}
+          cursor={{ stroke: chartColors.text, strokeWidth: 1, strokeDasharray: '4 4' }}
         />
+
+        {/* Average reference line */}
+        {avgTemp !== null && (
+          <ReferenceLine
+            y={avgTemp}
+            stroke={chartColors.text}
+            strokeDasharray="8 4"
+            strokeOpacity={0.5}
+            label={{
+              value: `avg ${avgTemp}°C`,
+              position: 'right',
+              fill: chartColors.text,
+              fontSize: 9,
+              fontFamily: 'JetBrains Mono, monospace',
+            }}
+          />
+        )}
+
+        {/* Warning zone at 45°C */}
+        <ReferenceLine
+          y={45}
+          stroke="#EF4444"
+          strokeDasharray="4 4"
+          strokeOpacity={0.3}
+        />
+
         <Line
           type="monotone"
           dataKey="temperature"
           stroke={chartColors.temperature.stroke}
           strokeWidth={2}
           dot={false}
+          connectNulls={false}
+          activeDot={{
+            r: 4,
+            fill: chartColors.temperature.stroke,
+            stroke: '#fff',
+            strokeWidth: 2
+          }}
         />
       </LineChart>
     </ResponsiveContainer>

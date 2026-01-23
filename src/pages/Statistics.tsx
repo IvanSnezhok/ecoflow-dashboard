@@ -9,6 +9,8 @@ import {
   Plug,
   Thermometer,
   Activity,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react'
 import { useDeviceStore } from '@/stores/deviceStore'
 import {
@@ -21,7 +23,53 @@ import {
   ChartContainer,
   useChartData,
 } from '@/components/charts'
+import { cn } from '@/lib/utils'
 import type { ChartPeriod, DateRange } from '@/types/device'
+
+interface StatCardProps {
+  icon: React.ReactNode
+  label: string
+  value: string | number
+  unit?: string
+  subtext?: string
+  trend?: 'up' | 'down' | 'neutral'
+  trendValue?: string
+  colorClass?: string
+}
+
+function StatCard({ icon, label, value, unit, subtext, trend, trendValue, colorClass = 'text-primary' }: StatCardProps) {
+  return (
+    <div className="rounded-sm border bg-card p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className={cn('flex items-center gap-2', colorClass)}>
+          {icon}
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {label}
+          </span>
+        </div>
+        {trend && trendValue && (
+          <div className={cn(
+            'flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded-sm',
+            trend === 'up' ? 'text-energy-green bg-energy-green/10' :
+            trend === 'down' ? 'text-energy-red bg-energy-red/10' :
+            'text-muted-foreground bg-muted'
+          )}>
+            {trend === 'up' ? <TrendingUp className="w-3 h-3" /> :
+             trend === 'down' ? <TrendingDown className="w-3 h-3" /> : null}
+            {trendValue}
+          </div>
+        )}
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-2xl font-mono font-bold tabular-nums">{value}</span>
+        {unit && <span className="text-sm text-muted-foreground font-mono">{unit}</span>}
+      </div>
+      {subtext && (
+        <p className="text-[10px] text-muted-foreground mt-1 font-mono">{subtext}</p>
+      )}
+    </div>
+  )
+}
 
 export default function Statistics() {
   const { serialNumber } = useParams<{ serialNumber: string }>()
@@ -36,26 +84,31 @@ export default function Statistics() {
     customRange
   )
 
-  // Calculate statistics from chart data
+  // Calculate statistics from chart data (filtering out null values)
   const stats = useMemo(() => {
     if (chartData.length === 0) {
       return null
     }
 
-    const avgSoc = Math.round(
-      chartData.reduce((sum, p) => sum + p.batterySoc, 0) / chartData.length
-    )
-    const maxSolar = Math.max(...chartData.map((p) => p.solarInputWatts))
-    const avgSolar = Math.round(
-      chartData.reduce((sum, p) => sum + p.solarInputWatts, 0) / chartData.length
-    )
-    const totalAcOutput = chartData.reduce((sum, p) => sum + p.acOutputWatts, 0)
-    const totalDcOutput = chartData.reduce((sum, p) => sum + p.dcOutputWatts, 0)
-    const avgTemp = Math.round(
-      chartData.reduce((sum, p) => sum + p.temperature, 0) / chartData.length
-    )
-    const minSoc = Math.min(...chartData.map((p) => p.batterySoc))
-    const maxSoc = Math.max(...chartData.map((p) => p.batterySoc))
+    // Filter out data points with null values for each metric
+    const socData = chartData.filter((p) => p.batterySoc !== null).map((p) => p.batterySoc as number)
+    const solarData = chartData.filter((p) => p.solarInputWatts !== null).map((p) => p.solarInputWatts as number)
+    const acOutputData = chartData.filter((p) => p.acOutputWatts !== null).map((p) => p.acOutputWatts as number)
+    const dcOutputData = chartData.filter((p) => p.dcOutputWatts !== null).map((p) => p.dcOutputWatts as number)
+    const tempData = chartData.filter((p) => p.temperature !== null).map((p) => p.temperature as number)
+
+    if (socData.length === 0) {
+      return null
+    }
+
+    const avgSoc = Math.round(socData.reduce((sum, v) => sum + v, 0) / socData.length)
+    const maxSolar = solarData.length > 0 ? Math.max(...solarData) : 0
+    const avgSolar = solarData.length > 0 ? Math.round(solarData.reduce((sum, v) => sum + v, 0) / solarData.length) : 0
+    const totalAcOutput = acOutputData.reduce((sum, v) => sum + v, 0)
+    const totalDcOutput = dcOutputData.reduce((sum, v) => sum + v, 0)
+    const avgTemp = tempData.length > 0 ? Math.round(tempData.reduce((sum, v) => sum + v, 0) / tempData.length) : 0
+    const minSoc = Math.min(...socData)
+    const maxSoc = Math.max(...socData)
 
     return {
       avgSoc,
@@ -98,13 +151,14 @@ export default function Statistics() {
       <div className="space-y-6">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </Link>
-        <div className="rounded-lg border bg-card p-6 text-center">
-          <p className="text-muted-foreground">Device not found: {serialNumber}</p>
+        <div className="rounded-sm border bg-card p-6 text-center">
+          <Battery className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+          <p className="text-xs text-muted-foreground">Device not found: {serialNumber}</p>
         </div>
       </div>
     )
@@ -112,101 +166,105 @@ export default function Statistics() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
+      {/* Header - Minimalist */}
+      <div className="flex items-center gap-3">
         <Link
           to={`/device/${serialNumber}`}
-          className="inline-flex items-center justify-center w-10 h-10 rounded-lg border hover:bg-accent"
+          className="inline-flex items-center justify-center w-8 h-8 rounded-sm border bg-card hover:bg-muted transition-colors"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4" />
         </Link>
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-lg font-semibold tracking-tight truncate">
             Statistics: {device.name || device.serialNumber}
           </h2>
-          <p className="text-muted-foreground">
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
             {device.deviceType} • Detailed usage analysis
           </p>
         </div>
-      </div>
-
-      {/* Date Range Picker */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <DateRangePicker
-          period={chartPeriod}
-          customRange={customRange}
-          onPeriodChange={handlePeriodChange}
-          onCustomRangeChange={handleCustomRangeChange}
-        />
         {chartData.length > 0 && (
-          <p className="text-sm text-muted-foreground">
-            {chartData.length} data points
-          </p>
+          <span className="text-[10px] font-mono text-muted-foreground">
+            {chartData.length} points
+          </span>
         )}
       </div>
 
+      {/* Date Range Picker */}
+      <DateRangePicker
+        period={chartPeriod}
+        customRange={customRange}
+        onPeriodChange={handlePeriodChange}
+        onCustomRangeChange={handleCustomRangeChange}
+      />
+
       {/* Summary Cards */}
       {stats && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-              <Battery className="w-4 h-4 text-green-500" />
-              Average Charge
-            </div>
-            <div className="text-2xl font-bold">{stats.avgSoc}%</div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Min: {stats.minSoc}% • Max: {stats.maxSoc}%
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-              <Sun className="w-4 h-4 text-yellow-500" />
-              Max Solar
-            </div>
-            <div className="text-2xl font-bold">{stats.maxSolar}W</div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Average: {stats.avgSolar}W
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-              <Activity className="w-4 h-4 text-blue-500" />
-              Total Consumption
-            </div>
-            <div className="text-2xl font-bold">{Math.round(stats.totalOutput / 60)}Wh</div>
-            <div className="text-xs text-muted-foreground mt-1">
-              For selected period
-            </div>
-          </div>
-
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-              <Thermometer className="w-4 h-4 text-orange-500" />
-              Average Temperature
-            </div>
-            <div className="text-2xl font-bold">{stats.avgTemp}°C</div>
-          </div>
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            icon={<Battery className="w-4 h-4" />}
+            label="Average Charge"
+            value={stats.avgSoc}
+            unit="%"
+            subtext={`Min ${stats.minSoc}% • Max ${stats.maxSoc}%`}
+            colorClass="text-energy-green"
+          />
+          <StatCard
+            icon={<Sun className="w-4 h-4" />}
+            label="Peak Solar"
+            value={stats.maxSolar}
+            unit="W"
+            subtext={`Avg ${stats.avgSolar}W`}
+            colorClass="text-energy-yellow"
+          />
+          <StatCard
+            icon={<Activity className="w-4 h-4" />}
+            label="Total Consumption"
+            value={Math.round(stats.totalOutput / 60)}
+            unit="Wh"
+            subtext="For selected period"
+            colorClass="text-energy-blue"
+          />
+          <StatCard
+            icon={<Thermometer className="w-4 h-4" />}
+            label="Avg Temperature"
+            value={stats.avgTemp}
+            unit="°C"
+            colorClass="text-energy-yellow"
+          />
         </div>
       )}
 
-      {/* Battery Level Chart */}
-      <ChartContainer
-        title="Battery Charge Level"
-        icon={<Battery className="w-5 h-5 text-green-500" />}
-        isLoading={isLoading}
-        error={error}
-        onRefresh={refetch}
-        isEmpty={chartData.length === 0}
-      >
-        <BatteryChart data={chartData} period={chartPeriod} height={250} />
-      </ChartContainer>
+      {/* Charts Grid - 2 columns for better layout */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Battery Level Chart */}
+        <ChartContainer
+          title="Battery Level"
+          icon={<Battery className="w-4 h-4 text-energy-green" />}
+          isLoading={isLoading}
+          error={error}
+          onRefresh={refetch}
+          isEmpty={chartData.length === 0}
+        >
+          <BatteryChart data={chartData} period={chartPeriod} height={220} />
+        </ChartContainer>
 
-      {/* Power Input Chart */}
+        {/* Temperature Chart */}
+        <ChartContainer
+          title="Temperature"
+          icon={<Thermometer className="w-4 h-4 text-energy-yellow" />}
+          isLoading={isLoading}
+          error={error}
+          onRefresh={refetch}
+          isEmpty={chartData.length === 0}
+        >
+          <TemperatureChart data={chartData} period={chartPeriod} height={220} />
+        </ChartContainer>
+      </div>
+
+      {/* Power Charts - Full Width */}
       <ChartContainer
         title="Input Power"
-        icon={<Plug className="w-5 h-5 text-purple-500" />}
+        icon={<Plug className="w-4 h-4 text-energy-purple" />}
         isLoading={isLoading}
         error={error}
         onRefresh={refetch}
@@ -221,10 +279,9 @@ export default function Statistics() {
         />
       </ChartContainer>
 
-      {/* Power Output Chart */}
       <ChartContainer
         title="Output Power"
-        icon={<Zap className="w-5 h-5 text-pink-500" />}
+        icon={<Zap className="w-4 h-4 text-energy-blue" />}
         isLoading={isLoading}
         error={error}
         onRefresh={refetch}
@@ -239,23 +296,11 @@ export default function Statistics() {
         />
       </ChartContainer>
 
-      {/* Temperature Chart */}
-      <ChartContainer
-        title="Battery Temperature"
-        icon={<Thermometer className="w-5 h-5 text-orange-500" />}
-        isLoading={isLoading}
-        error={error}
-        onRefresh={refetch}
-        isEmpty={chartData.length === 0}
-      >
-        <TemperatureChart data={chartData} period={chartPeriod} height={250} />
-      </ChartContainer>
-
       {/* Voltage Chart - Only show if voltage data exists */}
       {hasVoltageData && (
         <ChartContainer
           title="Battery Voltage"
-          icon={<Zap className="w-5 h-5 text-blue-500" />}
+          icon={<Zap className="w-4 h-4 text-energy-blue" />}
           isLoading={isLoading}
           error={error}
           onRefresh={refetch}
@@ -274,18 +319,20 @@ export default function Statistics() {
 
       {/* Extra Battery Section - Only show if extra batteries are connected */}
       {(hasExtraBattery1Data || hasExtraBattery2Data) && (
-        <>
-          <h3 className="text-lg font-semibold mt-8 mb-4 flex items-center gap-2">
-            <BatteryCharging className="w-5 h-5 text-primary" />
-            Extra Battery Statistics
-          </h3>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 pt-4">
+            <BatteryCharging className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Extra Battery Statistics
+            </span>
+          </div>
 
           <div className="grid gap-4 md:grid-cols-2">
             {hasExtraBattery1Data && (
               <>
                 <ChartContainer
                   title="Extra Battery 1 - SOC"
-                  icon={<Battery className="w-5 h-5 text-emerald-500" />}
+                  icon={<Battery className="w-4 h-4 text-energy-green" />}
                   isLoading={isLoading}
                   error={error}
                   onRefresh={refetch}
@@ -294,15 +341,15 @@ export default function Statistics() {
                   <ExtraBatteryChart
                     data={chartData}
                     period={chartPeriod}
-                    height={200}
+                    height={180}
                     metric="soc"
                     batteryIndex={1}
                   />
                 </ChartContainer>
 
                 <ChartContainer
-                  title="Extra Battery 1 - Temperature"
-                  icon={<Thermometer className="w-5 h-5 text-emerald-500" />}
+                  title="Extra Battery 1 - Temp"
+                  icon={<Thermometer className="w-4 h-4 text-energy-yellow" />}
                   isLoading={isLoading}
                   error={error}
                   onRefresh={refetch}
@@ -311,7 +358,7 @@ export default function Statistics() {
                   <ExtraBatteryChart
                     data={chartData}
                     period={chartPeriod}
-                    height={200}
+                    height={180}
                     metric="temp"
                     batteryIndex={1}
                   />
@@ -323,7 +370,7 @@ export default function Statistics() {
               <>
                 <ChartContainer
                   title="Extra Battery 2 - SOC"
-                  icon={<Battery className="w-5 h-5 text-violet-500" />}
+                  icon={<Battery className="w-4 h-4 text-energy-purple" />}
                   isLoading={isLoading}
                   error={error}
                   onRefresh={refetch}
@@ -332,15 +379,15 @@ export default function Statistics() {
                   <ExtraBatteryChart
                     data={chartData}
                     period={chartPeriod}
-                    height={200}
+                    height={180}
                     metric="soc"
                     batteryIndex={2}
                   />
                 </ChartContainer>
 
                 <ChartContainer
-                  title="Extra Battery 2 - Temperature"
-                  icon={<Thermometer className="w-5 h-5 text-violet-500" />}
+                  title="Extra Battery 2 - Temp"
+                  icon={<Thermometer className="w-4 h-4 text-energy-yellow" />}
                   isLoading={isLoading}
                   error={error}
                   onRefresh={refetch}
@@ -349,7 +396,7 @@ export default function Statistics() {
                   <ExtraBatteryChart
                     data={chartData}
                     period={chartPeriod}
-                    height={200}
+                    height={180}
                     metric="temp"
                     batteryIndex={2}
                   />
@@ -357,7 +404,7 @@ export default function Statistics() {
               </>
             )}
           </div>
-        </>
+        </div>
       )}
     </div>
   )

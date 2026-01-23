@@ -4,6 +4,7 @@ import { useDeviceStore } from '@/stores/deviceStore'
 import { useSettingsStore, commonTimezones } from '@/stores/settingsStore'
 import { cn } from '@/lib/utils'
 import { CheckCircle, XCircle, RefreshCw, Wifi, Database, Server, Clock, Globe } from 'lucide-react'
+import { SlackSettings } from '@/components/automation/SlackSettings'
 
 export default function Settings() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -183,6 +184,11 @@ export default function Settings() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Slack Integration */}
+        <div className="rounded-lg border bg-card p-6 md:col-span-2">
+          <SlackSettings />
         </div>
 
         {/* Database Info */}

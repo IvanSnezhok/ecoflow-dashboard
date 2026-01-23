@@ -1,43 +1,44 @@
 import { useSettingsStore, type TimeFormat } from '@/stores/settingsStore'
 
-// Chart colors and configuration
+// Chart colors and configuration - using energy design system
 export const chartColors = {
   batterySoc: {
-    stroke: '#22c55e',
+    stroke: '#10B981', // energy-green
     fill: 'url(#socGradient)',
   },
   batteryWatts: {
-    stroke: '#3b82f6',
+    stroke: '#3B82F6', // energy-blue
   },
   acInput: {
-    stroke: '#8b5cf6',
+    stroke: '#A855F7', // energy-purple
   },
   solarInput: {
-    stroke: '#f59e0b',
+    stroke: '#F59E0B', // energy-yellow
   },
   acOutput: {
-    stroke: '#ec4899',
+    stroke: '#3B82F6', // energy-blue
   },
   dcOutput: {
-    stroke: '#06b6d4',
+    stroke: '#06b6d4', // cyan (secondary)
   },
   temperature: {
-    stroke: '#f97316',
+    stroke: '#F59E0B', // energy-yellow
   },
   // New colors for detailed charts
   voltage: {
-    stroke: '#3b82f6', // Blue for main battery voltage
+    stroke: '#3B82F6', // energy-blue
   },
   extraBattery1: {
-    stroke: '#10b981', // Emerald for extra battery 1
+    stroke: '#10B981', // energy-green
   },
   extraBattery2: {
-    stroke: '#8b5cf6', // Violet for extra battery 2
+    stroke: '#A855F7', // energy-purple
   },
-  grid: '#e5e7eb',
-  gridDark: '#374151',
-  text: '#6b7280',
-  textDark: '#9ca3af',
+  // Grid and text colors
+  grid: '#E2E8F0', // blueprint style grid
+  gridDark: '#334155',
+  text: '#64748B', // text secondary
+  textDark: '#94A3B8',
 }
 
 export const periodLabels: Record<string, string> = {
