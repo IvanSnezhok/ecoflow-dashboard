@@ -16,6 +16,36 @@ import type {
   RuleTestResult,
 } from "@/types/automation";
 
+export interface VersionInfo {
+  current: string;
+  currentCommit: string;
+  latest: string | null;
+  latestCommit: string | null;
+  updateAvailable: boolean;
+  error?: string;
+}
+
+export type UpdateStep =
+  | 'idle'
+  | 'fetching'
+  | 'resetting'
+  | 'installing_root'
+  | 'installing_server'
+  | 'building_frontend'
+  | 'building_backend'
+  | 'restarting'
+  | 'completed'
+  | 'failed';
+
+export interface UpdateStatus {
+  step: UpdateStep;
+  progress: number;
+  message: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 const client = axios.create({
   baseURL: "/api",
   timeout: 10000,
@@ -117,4 +147,14 @@ export const api = {
 
   testSlackConnection: () =>
     client.post<{ success: boolean; error?: string }>("/automation/slack/test"),
+
+  // System API
+  getSystemVersion: () =>
+    client.get<{ success: boolean; data: VersionInfo; error?: string }>("/system/version"),
+
+  startSystemUpdate: () =>
+    client.post<{ success: boolean; message: string; error?: string }>("/system/update"),
+
+  getUpdateStatus: () =>
+    client.get<{ success: boolean; data: UpdateStatus }>("/system/update/status"),
 };

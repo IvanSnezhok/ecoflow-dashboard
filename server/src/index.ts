@@ -19,6 +19,7 @@ import { processDeviceAutomation, buildDeviceMetrics } from "./services/automati
 import devicesRouter from "./routes/devices.js";
 import logsRouter from "./routes/logs.js";
 import { automationRouter } from "./routes/automation.js";
+import systemRouter from "./routes/systemRoutes.js";
 
 const app = express();
 const server = createServer(app);
@@ -60,6 +61,7 @@ app.use("/api/devices/:sn/charge-limit", controlLimiter);
 app.use("/api/devices", devicesRouter);
 app.use("/api/logs", logsRouter);
 app.use("/api/automation", automationRouter);
+app.use("/api/system", systemRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {
