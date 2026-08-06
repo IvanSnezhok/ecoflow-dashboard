@@ -22,6 +22,7 @@ import {
 } from "./db/database.js";
 import { mqttService } from "./services/mqttService.js";
 import { ecoflowApi } from "./services/ecoflowApi.js";
+import { getDeviceProfile } from "./services/deviceProfiles.js";
 import { processDeviceAutomation, buildDeviceMetrics } from "./services/automationEngine.js";
 import devicesRouter from "./routes/devices.js";
 import logsRouter from "./routes/logs.js";
@@ -106,6 +107,7 @@ app.get("*", (req, res) => {
 // WebSocket server for real-time updates
 const wss = new WebSocketServer({ server, path: "/ws" });
 const clients = new Set<WebSocket>();
+let backgroundCollectionInProgress = false;
 
 wss.on("connection", (ws) => {
   console.log("WebSocket client connected");
@@ -222,6 +224,8 @@ server.listen(PORT, async () => {
   // Background data collection every 10 seconds (independent of frontend polling)
   console.log("Starting background data collection...");
   setInterval(async () => {
+    if (backgroundCollectionInProgress) return;
+    backgroundCollectionInProgress = true;
     try {
       const devices = await ecoflowApi.getDeviceList();
       for (const device of devices) {
@@ -229,6 +233,10 @@ server.listen(PORT, async () => {
           try {
             const quota = await ecoflowApi.getDeviceQuota(device.sn);
             const q = quota as Record<string, unknown>;
+            const profile = getDeviceProfile(device.productName);
+            // Do not record invented portable-power-station metrics or run power
+            // automation for products that have no verified profile yet.
+            if (profile.id === "unclassified-read-only") continue;
 
             const deviceId = upsertDevice(
               device.sn,
@@ -279,6 +287,8 @@ server.listen(PORT, async () => {
       }
     } catch (error) {
       console.error("Background collection error:", error);
+    } finally {
+      backgroundCollectionInProgress = false;
     }
   }, 10_000); // One durable sample per device every 10 seconds
 });

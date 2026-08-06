@@ -56,6 +56,18 @@ interface DevicesCache {
 let devicesCache: DevicesCache = { data: null, timestamp: 0 };
 const CACHE_TTL = 10_000; // Coalesce browser tabs; background collection remains the durable sampler.
 
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index]);
+    }
+  }));
+  return results;
+}
+
 // Get all devices with their latest state
 router.get("/", async (_req: Request, res: Response) => {
   try {
@@ -68,8 +80,10 @@ router.get("/", async (_req: Request, res: Response) => {
     const apiDevices = await ecoflowApi.getDeviceList();
 
     // Update local database
-    const devices = await Promise.all(
-      apiDevices.map(async (apiDevice) => {
+    const devices = await mapWithConcurrency(
+      apiDevices,
+      3,
+      async (apiDevice) => {
         const deviceId = upsertDevice(
           apiDevice.sn,
           apiDevice.productName,
@@ -310,21 +324,12 @@ router.get("/", async (_req: Request, res: Response) => {
           category: getDeviceProfile(apiDevice.productName).category,
           capabilities: getDeviceProfile(apiDevice.productName).capabilities,
         };
-      }),
+      },
     );
 
     // Update cache
     devicesCache = { data: devices, timestamp: Date.now() };
 
-    insertLog(
-      null,
-      "API_CALL",
-      "getDevices",
-      null,
-      JSON.stringify({ count: devices.length }),
-      true,
-      null,
-    );
     res.json(devices);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

@@ -27,6 +27,11 @@ class EcoflowApiClient {
   private baseUrl: string;
   private accessKey: string;
   private secretKey: string;
+  private readonly cacheTtlMs = 10_000;
+  private deviceListCache: { value: DeviceListItem[]; timestamp: number } | null = null;
+  private deviceListInFlight: Promise<DeviceListItem[]> | null = null;
+  private quotaCache = new Map<string, { value: DeviceQuota; timestamp: number }>();
+  private quotaInFlight = new Map<string, Promise<DeviceQuota>>();
 
   constructor() {
     this.baseUrl = config.ecoflow.apiEndpoint;
@@ -60,16 +65,22 @@ class EcoflowApiClient {
       });
     }
 
-    console.log(
-      `[EcoflowAPI] ${method} ${path}`,
-      body ? JSON.stringify(body) : "",
-    );
-
-    const response = await fetch(url.toString(), {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    // Never log full quota payloads: they are large, sensitive diagnostic data and
+    // logging them once per poll dominates disk I/O.
+    console.debug(`[EcoflowAPI] ${method} ${path}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       throw new Error(
@@ -78,7 +89,6 @@ class EcoflowApiClient {
     }
 
     const data = (await response.json()) as ApiResponse<T>;
-    console.log(`[EcoflowAPI] Response:`, JSON.stringify(data));
 
     if (data.code !== "0") {
       throw new Error(`Ecoflow API error (code ${data.code}): ${data.message}`);
@@ -93,14 +103,37 @@ class EcoflowApiClient {
   }
 
   async getDeviceList(): Promise<DeviceListItem[]> {
-    return this.request<DeviceListItem[]>("GET", "/iot-open/sign/device/list");
+    if (this.deviceListCache && Date.now() - this.deviceListCache.timestamp < this.cacheTtlMs) {
+      return this.deviceListCache.value;
+    }
+    if (!this.deviceListInFlight) {
+      this.deviceListInFlight = this.request<DeviceListItem[]>("GET", "/iot-open/sign/device/list")
+        .then((value) => {
+          this.deviceListCache = { value, timestamp: Date.now() };
+          return value;
+        })
+        .finally(() => { this.deviceListInFlight = null; });
+    }
+    return this.deviceListInFlight;
   }
 
   async getDeviceQuota(sn: string): Promise<DeviceQuota> {
-    return this.request<DeviceQuota>("GET", "/iot-open/sign/device/quota/all", {
-      sn,
-    });
+    const cached = this.quotaCache.get(sn);
+    if (cached && Date.now() - cached.timestamp < this.cacheTtlMs) return cached.value;
+    let inFlight = this.quotaInFlight.get(sn);
+    if (!inFlight) {
+      inFlight = this.request<DeviceQuota>("GET", "/iot-open/sign/device/quota/all", { sn })
+        .then((value) => {
+          this.quotaCache.set(sn, { value, timestamp: Date.now() });
+          return value;
+        })
+        .finally(() => { this.quotaInFlight.delete(sn); });
+      this.quotaInFlight.set(sn, inFlight);
+    }
+    return inFlight;
   }
+
+  private invalidateQuota(sn: string): void { this.quotaCache.delete(sn); }
 
   // Generic function for devices that use cmdCode (like PowerStream)
   async setDeviceFunction(
@@ -112,12 +145,9 @@ class EcoflowApiClient {
       "PUT",
       "/iot-open/sign/device/quota",
       {},
-      {
-        sn,
-        cmdCode,
-        params,
-      },
+      { sn, cmdCode, params },
     );
+    this.invalidateQuota(sn);
   }
 
   // DELTA Pro specific commands use cmdSet: 32 with command IDs
@@ -156,6 +186,7 @@ class EcoflowApiClient {
         },
       },
     );
+    this.invalidateQuota(sn);
   }
 
   async setAcOutput(sn: string, enabled: boolean): Promise<void> {
