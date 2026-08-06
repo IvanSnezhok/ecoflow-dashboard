@@ -1,7 +1,7 @@
 import { config } from "../config/env.js";
 import { generateSignature } from "./signatureService.js";
 import { getDeviceBySn } from "../db/database.js";
-import { getDeviceProfile } from "./deviceProfiles.js";
+import { getSupportedCommand, type DeviceAction } from "./deviceProfiles.js";
 
 interface ApiResponse<T> {
   code: string;
@@ -159,73 +159,42 @@ class EcoflowApiClient {
   // - Min discharge SOC: id 51
   // - Car input current: id 71
 
-  private assertLegacyDeltaPro(sn: string): void {
+  private async sendProfileCommand(sn: string, action: DeviceAction): Promise<void> {
     const device = getDeviceBySn(sn) as { device_type: string } | undefined;
-    const profile = device ? getDeviceProfile(device.device_type) : undefined;
-    if (!profile || profile.id !== "delta-pro-legacy") {
-      throw new Error("This command is not supported for this device profile");
-    }
-  }
-
-  private async sendDeltaProCommand(
-    sn: string,
-    id: number,
-    cmdParams: Record<string, unknown>,
-  ): Promise<void> {
-    this.assertLegacyDeltaPro(sn);
+    if (!device) throw new Error("Device must be discovered before it can be controlled");
+    const command = getSupportedCommand(device.device_type, action);
     await this.request(
       "PUT",
       "/iot-open/sign/device/quota",
       {},
-      {
-        sn,
-        params: {
-          cmdSet: 32,
-          id,
-          ...cmdParams,
-        },
-      },
+      { sn, params: { cmdSet: 32, id: command.id, ...command.params } },
     );
     this.invalidateQuota(sn);
   }
 
   async setAcOutput(sn: string, enabled: boolean): Promise<void> {
-    // id 66 controls both AC enabled and X-Boost
-    await this.sendDeltaProCommand(sn, 66, {
-      enabled: enabled ? 1 : 0,
-      xboost: 0, // X-Boost off by default
-    });
+    await this.sendProfileCommand(sn, { type: "setAcOutput", enabled });
   }
 
   async setDcOutput(sn: string, enabled: boolean): Promise<void> {
-    // id 81 is car charger switch (DC 12V output)
-    await this.sendDeltaProCommand(sn, 81, { enabled: enabled ? 1 : 0 });
+    await this.sendProfileCommand(sn, { type: "setDcOutput", enabled });
   }
 
-  async setChargeLimit(
-    sn: string,
-    maxSoc: number,
-    minSoc: number,
-  ): Promise<void> {
-    // Set max charge SOC (id 49)
-    await this.sendDeltaProCommand(sn, 49, { maxChgSoc: maxSoc });
-    // Set min discharge SOC (id 51)
-    await this.sendDeltaProCommand(sn, 51, { minDsgSoc: minSoc });
+  async setChargeLimit(sn: string, maxSoc: number, minSoc: number): Promise<void> {
+    await this.setMaxChargeSoc(sn, maxSoc);
+    await this.setMinDischargeSoc(sn, minSoc);
   }
 
   async setMaxChargeSoc(sn: string, maxSoc: number): Promise<void> {
-    // Set max charge SOC (id 49), range 50-100%
-    await this.sendDeltaProCommand(sn, 49, { maxChgSoc: maxSoc });
+    await this.sendProfileCommand(sn, { type: "setMaxChargeSoc", value: maxSoc });
   }
 
   async setMinDischargeSoc(sn: string, minSoc: number): Promise<void> {
-    // Set min discharge SOC (id 51), range 0-30%
-    await this.sendDeltaProCommand(sn, 51, { minDsgSoc: minSoc });
+    await this.sendProfileCommand(sn, { type: "setMinDischargeSoc", value: minSoc });
   }
 
   async setAcChargingPower(sn: string, watts: number): Promise<void> {
-    // Set AC charging power (id 69), range 200-2900W
-    await this.sendDeltaProCommand(sn, 69, { slowChgPower: watts });
+    await this.sendProfileCommand(sn, { type: "setAcChargingPower", value: watts });
   }
 
   // Get MQTT credentials for real-time updates

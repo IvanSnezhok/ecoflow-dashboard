@@ -12,6 +12,7 @@ export interface Device {
   id: number;
   profileId?: string;
   category?: string;
+  profileStatus?: "supported" | "read-only";
   capabilities?: DeviceCapabilities;
   serialNumber: string;
   deviceType:

@@ -199,7 +199,9 @@ export function DeviceCard({ device }: DeviceCardProps) {
       ) : (
         <div className="px-4 py-8 text-center">
           <Battery className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-          <p className="text-xs text-muted-foreground">No data</p>
+          <p className="text-xs text-muted-foreground">
+            {device.profileStatus === "read-only" ? "Read-only profile — telemetry mapping pending" : "No data"}
+          </p>
         </div>
       )}
     </Link>

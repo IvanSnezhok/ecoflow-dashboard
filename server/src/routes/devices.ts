@@ -111,7 +111,7 @@ router.get("/", async (_req: Request, res: Response) => {
             }
 
             const q = quota as Record<string, unknown>;
-            const profile = getDeviceProfile(apiDevice.productName);
+            const profile = getDeviceProfile(apiDevice.productName, q);
             // An unknown product may use a completely different quota schema. Keep it
             // visible as an online read-only device rather than fabricating zero metrics.
             if (profile.id === "unclassified-read-only") {
@@ -124,6 +124,7 @@ router.get("/", async (_req: Request, res: Response) => {
                 state: null,
                 profileId: profile.id,
                 category: profile.category,
+                profileStatus: profile.status,
                 capabilities: profile.capabilities,
               };
             }
@@ -322,6 +323,7 @@ router.get("/", async (_req: Request, res: Response) => {
           lastKnownErrors,
           profileId: getDeviceProfile(apiDevice.productName).id,
           category: getDeviceProfile(apiDevice.productName).category,
+          profileStatus: getDeviceProfile(apiDevice.productName).status,
           capabilities: getDeviceProfile(apiDevice.productName).capabilities,
         };
       },
@@ -357,10 +359,11 @@ router.get("/:sn", async (req: Request, res: Response) => {
       return;
     }
 
-    const profile = getDeviceProfile(device.device_type);
+    let profile = getDeviceProfile(device.device_type);
     let state = null;
     if (device.online && profile.id !== "unclassified-read-only") {
       const quota = await ecoflowApi.getDeviceQuota(sn);
+      profile = getDeviceProfile(device.device_type, quota as Record<string, unknown>);
       const normalized = profile.normalizeQuota(quota as Record<string, unknown>);
       state = normalized ? { serialNumber: sn, ...normalized, timestamp: new Date().toISOString() } : null;
     }
@@ -374,6 +377,7 @@ router.get("/:sn", async (req: Request, res: Response) => {
       state,
       profileId: profile.id,
       category: profile.category,
+      profileStatus: profile.status,
       capabilities: profile.capabilities,
     });
   } catch (error) {

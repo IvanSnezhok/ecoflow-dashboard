@@ -11,7 +11,8 @@
     "build:backend": "npm run build --prefix server",
     "start": "npm run start --prefix server",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:profiles": "npm run test:profiles --prefix server"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.13",
