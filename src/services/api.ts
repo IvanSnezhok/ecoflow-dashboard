@@ -15,6 +15,7 @@ import type {
   UpdateSlackSettingsDto,
   RuleTestResult,
 } from "@/types/automation";
+import type { ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
 
 export interface VersionInfo {
   current: string;
@@ -147,6 +148,21 @@ export const api = {
 
   testSlackConnection: () =>
     client.post<{ success: boolean; error?: string }>("/automation/slack/test"),
+
+  getResilienceSettings: () => client.get<{ success: boolean; data: ResilienceSettings }>('/resilience/settings'),
+  updateResilienceSettings: (settings: ResilienceSettings) =>
+    client.put<{ success: boolean; data: ResilienceSettings }>('/resilience/settings', settings),
+  getResilienceStatus: () => client.get<{ success: boolean; data: ResilienceStatus }>('/resilience/status'),
+  refreshResilience: () => client.post<{ success: boolean; data: ResilienceStatus }>('/resilience/refresh'),
+  getResilienceCatalog: () => client.get<{ success: boolean; data: YasnoRegion[] }>('/resilience/catalog'),
+  getResilienceGroups: (regionId: number, dsoId: number) =>
+    client.get<{ success: boolean; data: string[] }>('/resilience/groups', { params: { regionId, dsoId } }),
+  searchResilienceStreets: (regionId: number, dsoId: number, query: string) =>
+    client.get<{ success: boolean; data: YasnoAddressOption[] }>('/resilience/address/streets', { params: { regionId, dsoId, query } }),
+  searchResilienceHouses: (regionId: number, dsoId: number, streetId: number, query: string) =>
+    client.get<{ success: boolean; data: YasnoAddressOption[] }>('/resilience/address/houses', { params: { regionId, dsoId, streetId, query } }),
+  resolveResilienceGroup: (regionId: number, dsoId: number, streetId: number, houseId: number) =>
+    client.get<{ success: boolean; data: { group: string } }>('/resilience/address/group', { params: { regionId, dsoId, streetId, houseId } }),
 
   // System API
   getSystemVersion: () =>

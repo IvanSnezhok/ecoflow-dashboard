@@ -13,6 +13,7 @@ const ErrorHistory = lazy(() => import('./pages/ErrorHistory'))
 const Automation = lazy(() => import('./pages/Automation'))
 const Logs = lazy(() => import('./pages/Logs'))
 const Settings = lazy(() => import('./pages/Settings'))
+const Resilience = lazy(() => import('./pages/Resilience'))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30000, gcTime: 5 * 60 * 1000, refetchOnWindowFocus: false, retry: 1 } },
@@ -40,6 +41,7 @@ function App() {
                 <Route path="/device/:serialNumber/errors" element={<ErrorHistory />} />
                 <Route path="/statistics/:serialNumber" element={<Statistics />} />
                 <Route path="/automation" element={<Automation />} />
+                <Route path="/resilience" element={<Resilience />} />
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/settings" element={<Settings />} />
               </Routes>

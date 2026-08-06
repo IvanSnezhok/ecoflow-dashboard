@@ -12,7 +12,8 @@
     "start": "npm run start --prefix server",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:profiles": "npm run test:profiles --prefix server"
+    "test:profiles": "npm run test:profiles --prefix server",
+    "test:resilience": "npm run test:resilience --prefix server"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.13",

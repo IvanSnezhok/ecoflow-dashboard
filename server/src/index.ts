@@ -28,6 +28,8 @@ import devicesRouter from "./routes/devices.js";
 import logsRouter from "./routes/logs.js";
 import { automationRouter } from "./routes/automation.js";
 import systemRouter from "./routes/systemRoutes.js";
+import { resilienceRouter } from "./routes/resilience.js";
+import { processResilienceAutomation } from "./services/resilienceService.js";
 
 const app = express();
 const server = createServer(app);
@@ -83,6 +85,7 @@ app.use("/api/devices", devicesRouter);
 app.use("/api/logs", logsRouter);
 app.use("/api/automation", automationRouter);
 app.use("/api/system", systemRouter);
+app.use("/api/resilience", resilienceRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -274,6 +277,7 @@ server.listen(PORT, async () => {
                 q,
               );
               await processDeviceAutomation(metrics);
+              await processResilienceAutomation(metrics, q);
             } catch (automationErr) {
               console.error(
                 `Automation error for ${device.sn}:`,

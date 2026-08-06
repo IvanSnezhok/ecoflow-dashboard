@@ -76,3 +76,18 @@ git rm --cached server/data/ecoflow.db server/data/ecoflow.db-shm server/data/ec
 ## Device support
 
 Unknown EcoFlow products are intentionally read-only. Add a documented profile in `server/src/services/deviceProfiles.ts` with quota fixtures and command payload tests before exposing controls for that product.
+
+## Kyiv outage resilience
+
+The **Power reserve** page reads planned, probable and emergency outage states from
+YASNO's public web-service endpoints. Select the EcoFlow device and Kyiv distribution
+operator, then search for the street and house to resolve the outage group automatically
+(manual group selection remains available as a fallback). Define the daily load profile. The forecast uses
+the current SOC of the DELTA Pro and every detected extra battery, the configured
+reserve SOC and inverter efficiency.
+
+AC automation has a separate opt-in switch. It turns AC on only inside the configured
+warning window (or during an active/emergency state), refuses to do so below the
+minimum SOC, and pauses commands when schedule data is stale. It turns AC off after
+the recovery delay only when this automation was the component that turned it on.
+YASNO schedules remain advisory and can change without notice.

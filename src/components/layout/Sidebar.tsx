@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, FileText, Settings, Battery, Zap, Wifi, WifiOff, Radio } from 'lucide-react'
+import { LayoutDashboard, FileText, Settings, Battery, Zap, Wifi, WifiOff, Radio, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { useMqtt } from '@/hooks/useMqtt'
@@ -7,6 +7,7 @@ import { useMqtt } from '@/hooks/useMqtt'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Automation', href: '/automation', icon: Zap },
+  { name: 'Power reserve', href: '/resilience', icon: ShieldCheck },
   { name: 'Logs', href: '/logs', icon: FileText },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]

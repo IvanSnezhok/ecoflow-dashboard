@@ -101,6 +101,7 @@ router.get("/", async (_req: Request, res: Response) => {
             if (!quota || typeof quota !== "object") {
               console.warn(`Invalid quota response for ${apiDevice.sn}`);
               return {
+                id: deviceId,
                 serialNumber: apiDevice.sn,
                 deviceType: apiDevice.productName,
                 name: apiDevice.deviceName,
@@ -116,6 +117,7 @@ router.get("/", async (_req: Request, res: Response) => {
             // visible as an online read-only device rather than fabricating zero metrics.
             if (profile.id === "unclassified-read-only") {
               return {
+                id: deviceId,
                 serialNumber: apiDevice.sn,
                 deviceType: apiDevice.productName,
                 name: apiDevice.deviceName,
@@ -314,6 +316,7 @@ router.get("/", async (_req: Request, res: Response) => {
         }
 
         return {
+          id: deviceId,
           serialNumber: apiDevice.sn,
           deviceType: apiDevice.productName,
           name: apiDevice.deviceName,

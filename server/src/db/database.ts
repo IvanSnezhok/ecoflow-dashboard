@@ -107,6 +107,26 @@ export function initDatabase(): void {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Kyiv outage-aware AC automation and load forecast (single installation)
+    CREATE TABLE IF NOT EXISTS resilience_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      device_id INTEGER,
+      enabled INTEGER DEFAULT 0,
+      auto_ac INTEGER DEFAULT 0,
+      region_id INTEGER,
+      dso_id INTEGER,
+      outage_group TEXT,
+      warning_lead_minutes INTEGER DEFAULT 60,
+      recovery_delay_minutes INTEGER DEFAULT 15,
+      min_soc INTEGER DEFAULT 25,
+      reserve_soc INTEGER DEFAULT 15,
+      battery_capacity_wh INTEGER DEFAULT 3600,
+      inverter_efficiency REAL DEFAULT 0.85,
+      load_profile TEXT DEFAULT '[]',
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
     -- Create indexes
     CREATE INDEX IF NOT EXISTS idx_device_states_device_timestamp
       ON device_states(device_id, timestamp);
@@ -805,6 +825,54 @@ export function cleanupAutomationLogs(retentionDays: number = 30): void {
   const cutoff = cutoffDate.toISOString()
 
   db.prepare('DELETE FROM automation_logs WHERE timestamp < ?').run(cutoff)
+}
+
+// ==================== Resilience Settings ====================
+
+export interface ResilienceSettingsRow {
+  id: number
+  device_id: number | null
+  enabled: number
+  auto_ac: number
+  region_id: number | null
+  dso_id: number | null
+  outage_group: string | null
+  warning_lead_minutes: number
+  recovery_delay_minutes: number
+  min_soc: number
+  reserve_soc: number
+  battery_capacity_wh: number
+  inverter_efficiency: number
+  load_profile: string
+  updated_at: string
+}
+
+export function getResilienceSettings(): ResilienceSettingsRow | undefined {
+  return db.prepare('SELECT * FROM resilience_settings WHERE id = 1').get() as ResilienceSettingsRow | undefined
+}
+
+export function upsertResilienceSettings(values: Omit<ResilienceSettingsRow, 'id' | 'updated_at'>): void {
+  db.prepare(`
+    INSERT INTO resilience_settings (
+      id, device_id, enabled, auto_ac, region_id, dso_id, outage_group,
+      warning_lead_minutes, recovery_delay_minutes, min_soc, reserve_soc,
+      battery_capacity_wh, inverter_efficiency, load_profile, updated_at
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      device_id=excluded.device_id, enabled=excluded.enabled, auto_ac=excluded.auto_ac,
+      region_id=excluded.region_id, dso_id=excluded.dso_id, outage_group=excluded.outage_group,
+      warning_lead_minutes=excluded.warning_lead_minutes,
+      recovery_delay_minutes=excluded.recovery_delay_minutes,
+      min_soc=excluded.min_soc, reserve_soc=excluded.reserve_soc,
+      battery_capacity_wh=excluded.battery_capacity_wh,
+      inverter_efficiency=excluded.inverter_efficiency,
+      load_profile=excluded.load_profile, updated_at=CURRENT_TIMESTAMP
+  `).run(
+    values.device_id, values.enabled, values.auto_ac, values.region_id, values.dso_id,
+    values.outage_group, values.warning_lead_minutes, values.recovery_delay_minutes,
+    values.min_soc, values.reserve_soc, values.battery_capacity_wh,
+    values.inverter_efficiency, values.load_profile
+  )
 }
 
 // ==================== Slack Settings ====================
