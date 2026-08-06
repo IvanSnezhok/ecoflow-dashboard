@@ -1,0 +1,13 @@
+[Unit]
+Description=Ecoflow Dashboard host updater (git pull, build, docker compose)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/data/services/ecoflow_dashboard
+ExecStart=/mnt/data/services/ecoflow_dashboard/deploy/host-updater.sh
+TimeoutStartSec=1800
+# npm and docker both need a real HOME and PATH under a user manager.
+Environment=HOME=%h
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

@@ -1,0 +1,35 @@
+name: ecoflow
+
+# Публікується назовні через ecoflow-cloudflared.service (працює на хості).
+# Порт 3001 лишається тим самим, що слухав systemd-процес до переїзду.
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ecoflow-dashboard:local
+    container_name: ecoflow-dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Europe/Kyiv
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # база телеметрії лишається на диску хоста, поза образом
+      - ./server/data:/app/server/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3001/ -o /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 20s
+    mem_limit: 1g

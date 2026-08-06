@@ -28,5 +28,13 @@ export const config = {
     enabled: process.env.DASHBOARD_UPDATES_ENABLED === 'true',
     branch: process.env.DASHBOARD_UPDATE_BRANCH || 'main',
     systemdService: process.env.DASHBOARD_SYSTEMD_SERVICE || '',
+    // 'git'        — the server runs straight from a git worktree and updates itself.
+    // 'host-agent' — the server runs in a container; it drops a request file into the
+    //                shared data volume and a host-side systemd unit does the work.
+    mode: process.env.DASHBOARD_UPDATE_MODE === 'host-agent' ? 'host-agent' : 'git',
+  },
+  retention: {
+    // 0 disables pruning entirely and keeps the full history.
+    days: parseInt(process.env.DASHBOARD_RETENTION_DAYS || '0', 10),
   },
 }

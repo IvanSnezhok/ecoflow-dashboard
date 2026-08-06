@@ -10,6 +10,10 @@ const __dirname = dirname(__filename);
 // Project root is 3 levels up from server/src/services
 const PROJECT_ROOT = join(__dirname, '..', '..', '..');
 
+// Written by the host updater after every successful build. It is the only way a
+// container — which ships without .git — can know which revision it is running.
+const VERSION_STAMP = join(PROJECT_ROOT, 'server', 'data', 'version.json');
+
 interface VersionInfo {
   current: string;
   currentCommit: string;
@@ -50,7 +54,19 @@ export const versionService = {
         encoding: 'utf-8',
       }).trim();
     } catch {
-      return 'unknown';
+      return this.getStampedCommit() ?? 'unknown';
+    }
+  },
+
+  /**
+   * Read the revision stamp the host updater leaves in the shared data volume.
+   */
+  getStampedCommit(): string | null {
+    try {
+      const stamp = JSON.parse(readFileSync(VERSION_STAMP, 'utf-8'));
+      return typeof stamp.commit === 'string' ? stamp.commit.slice(0, 7) : null;
+    } catch {
+      return null;
     }
   },
 
@@ -59,10 +75,10 @@ export const versionService = {
    */
   getGitHubRepo(): { owner: string; repo: string } | null {
     try {
-      const remoteUrl = execSync('git config --get remote.origin.url', {
-        cwd: PROJECT_ROOT,
-        encoding: 'utf-8',
-      }).trim();
+      const remoteUrl = this.getRemoteUrl();
+      if (!remoteUrl) {
+        return null;
+      }
 
       // Parse GitHub URL (supports both HTTPS and SSH formats)
       // HTTPS: https://github.com/owner/repo.git
@@ -77,6 +93,25 @@ export const versionService = {
       return null;
     } catch {
       return null;
+    }
+  },
+
+  /**
+   * Origin URL, from git when available and from the host updater's stamp otherwise.
+   */
+  getRemoteUrl(): string | null {
+    try {
+      return execSync('git config --get remote.origin.url', {
+        cwd: PROJECT_ROOT,
+        encoding: 'utf-8',
+      }).trim();
+    } catch {
+      try {
+        const stamp = JSON.parse(readFileSync(VERSION_STAMP, 'utf-8'));
+        return typeof stamp.remote === 'string' ? stamp.remote : null;
+      } catch {
+        return null;
+      }
     }
   },
 
@@ -164,5 +199,13 @@ export const versionService = {
    */
   isGitRepo(): boolean {
     return existsSync(join(PROJECT_ROOT, '.git'));
+  },
+
+  /**
+   * Whether this deployment can update itself at all. A container has no .git of its
+   * own, but it can still be updated by the host agent that owns the worktree.
+   */
+  canUpdate(): boolean {
+    return this.isGitRepo() || config.updates.mode === 'host-agent';
   },
 };

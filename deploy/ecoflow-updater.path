@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for Ecoflow Dashboard update requests from the container
+
+[Path]
+# The dashboard writes this file when the operator presses Update in Settings.
+PathExists=/mnt/data/services/ecoflow_dashboard/server/data/update-request.json
+Unit=ecoflow-updater.service
+
+[Install]
+WantedBy=default.target

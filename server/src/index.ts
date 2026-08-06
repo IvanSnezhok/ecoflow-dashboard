@@ -4,6 +4,11 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import { config } from "./config/env.js";
 import {
@@ -30,7 +35,20 @@ const server = createServer(app);
 initDatabase();
 
 // Middleware
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'", "ws:", "wss:"],
+        fontSrc: ["'self'", "https:", "data:"],
+      },
+    },
+  })
+);
 app.use(cors({ origin: config.server.corsOrigin }));
 app.use(express.json());
 
@@ -71,6 +89,18 @@ app.get("/api/health", (_req, res) => {
     status: "ok",
     mqtt: mqttService.isConnected() ? "connected" : "disconnected",
   });
+});
+
+// Serve static files from the frontend build
+const frontendDistPath = path.join(__dirname, "../../dist");
+app.use(express.static(frontendDistPath));
+
+// Serve index.html for all non-API routes (SPA support)
+app.get("*", (req, res) => {
+  // Don't serve index.html for API routes or WebSocket
+  if (!req.path.startsWith("/api") && !req.path.startsWith("/ws")) {
+    res.sendFile(path.join(frontendDistPath, "index.html"));
+  }
 });
 
 // WebSocket server for real-time updates
@@ -176,16 +206,21 @@ server.listen(PORT, async () => {
     console.log("Server will continue without real-time updates");
   }
 
-  // Background data collection every 5 seconds (independent of frontend polling)
-  console.log("Starting background data collection...");
   // Retention is enforced server-side; the UI must not be the cleanup scheduler.
-  cleanupOldData();
-  cleanupAutomationLogs();
-  setInterval(() => {
-    cleanupOldData();
-    cleanupAutomationLogs();
-  }, 24 * 60 * 60 * 1000);
+  // DASHBOARD_RETENTION_DAYS=0 (the default) keeps the full history untouched.
+  if (config.retention.days > 0) {
+    const pruneOldData = () => {
+      cleanupOldData(config.retention.days);
+      cleanupAutomationLogs(config.retention.days);
+    };
+    pruneOldData();
+    setInterval(pruneOldData, 24 * 60 * 60 * 1000);
+  } else {
+    console.log("Data retention pruning disabled (DASHBOARD_RETENTION_DAYS=0)");
+  }
 
+  // Background data collection every 10 seconds (independent of frontend polling)
+  console.log("Starting background data collection...");
   setInterval(async () => {
     try {
       const devices = await ecoflowApi.getDeviceList();

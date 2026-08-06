@@ -10,11 +10,10 @@ const router = Router();
  */
 router.get('/version', async (_req: Request, res: Response) => {
   try {
-    // Check if this is a git repository
-    if (!versionService.isGitRepo()) {
+    if (!versionService.canUpdate()) {
       return res.status(400).json({
         success: false,
-        error: 'Not a git repository. Updates are only available for git installations.',
+        error: 'Not a git repository. Set DASHBOARD_UPDATE_MODE=host-agent for container deployments, or run the dashboard from a git worktree.',
       });
     }
 
@@ -46,11 +45,10 @@ router.post('/update', async (_req: Request, res: Response) => {
       });
     }
 
-    // Check if this is a git repository
-    if (!versionService.isGitRepo()) {
+    if (!versionService.canUpdate()) {
       return res.status(400).json({
         success: false,
-        error: 'Not a git repository. Updates are only available for git installations.',
+        error: 'Not a git repository. Set DASHBOARD_UPDATE_MODE=host-agent for container deployments, or run the dashboard from a git worktree.',
       });
     }
 
