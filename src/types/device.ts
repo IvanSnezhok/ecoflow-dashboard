@@ -1,5 +1,18 @@
+export interface DeviceCapabilities {
+  battery: boolean;
+  acOutput: boolean;
+  dcOutput: boolean;
+  solarInput: boolean;
+  extraBatteries: boolean;
+  chargeLimits: boolean;
+  chargingPower?: { min: number; max: number; step: number };
+}
+
 export interface Device {
   id: number;
+  profileId?: string;
+  category?: string;
+  capabilities?: DeviceCapabilities;
   serialNumber: string;
   deviceType:
     | "DELTA_PRO"

@@ -55,7 +55,7 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response) {
-      const message = error.response.data?.message || "An error occurred";
+      const message = error.response.data?.error || error.response.data?.message || "An error occurred";
       return Promise.reject(new Error(message));
     }
     if (error.request) {

@@ -120,6 +120,7 @@ export interface AutomationRule {
   createdAt: string
   updatedAt: string
   lastTriggeredAt?: string
+  executionCount?: number
   cooldownStatus?: {
     inCooldown: boolean
     remainingSeconds?: number

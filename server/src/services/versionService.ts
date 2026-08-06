@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { config } from '../config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -90,7 +91,7 @@ export const versionService = {
 
     try {
       const response = await fetch(
-        `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/main`,
+        `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(config.updates.branch)}`,
         {
           headers: {
             Accept: 'application/vnd.github.v3+json',

@@ -1,5 +1,7 @@
 import { config } from "../config/env.js";
 import { generateSignature } from "./signatureService.js";
+import { getDeviceBySn } from "../db/database.js";
+import { getDeviceProfile } from "./deviceProfiles.js";
 
 interface ApiResponse<T> {
   code: string;
@@ -127,11 +129,20 @@ class EcoflowApiClient {
   // - Min discharge SOC: id 51
   // - Car input current: id 71
 
+  private assertLegacyDeltaPro(sn: string): void {
+    const device = getDeviceBySn(sn) as { device_type: string } | undefined;
+    const profile = device ? getDeviceProfile(device.device_type) : undefined;
+    if (!profile || profile.id !== "delta-pro-legacy") {
+      throw new Error("This command is not supported for this device profile");
+    }
+  }
+
   private async sendDeltaProCommand(
     sn: string,
     id: number,
     cmdParams: Record<string, unknown>,
   ): Promise<void> {
+    this.assertLegacyDeltaPro(sn);
     await this.request(
       "PUT",
       "/iot-open/sign/device/quota",

@@ -12,6 +12,8 @@ import {
   getDeviceBySn,
   upsertDevice,
   insertLog,
+  cleanupOldData,
+  cleanupAutomationLogs,
 } from "./db/database.js";
 import { mqttService } from "./services/mqttService.js";
 import { ecoflowApi } from "./services/ecoflowApi.js";
@@ -176,6 +178,14 @@ server.listen(PORT, async () => {
 
   // Background data collection every 5 seconds (independent of frontend polling)
   console.log("Starting background data collection...");
+  // Retention is enforced server-side; the UI must not be the cleanup scheduler.
+  cleanupOldData();
+  cleanupAutomationLogs();
+  setInterval(() => {
+    cleanupOldData();
+    cleanupAutomationLogs();
+  }, 24 * 60 * 60 * 1000);
+
   setInterval(async () => {
     try {
       const devices = await ecoflowApi.getDeviceList();
@@ -235,7 +245,7 @@ server.listen(PORT, async () => {
     } catch (error) {
       console.error("Background collection error:", error);
     }
-  }, 5000); // Every 5 seconds
+  }, 10_000); // One durable sample per device every 10 seconds
 });
 
 // Graceful shutdown

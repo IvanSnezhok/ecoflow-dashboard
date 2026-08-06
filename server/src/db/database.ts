@@ -7,6 +7,13 @@ const dbPath = path.resolve(__dirname, '../../data/ecoflow.db')
 
 export const db: DatabaseType = new Database(dbPath)
 
+// Multiple request paths can observe the same quota. Persist one snapshot per device
+// per interval and retain the large raw payload only for periodic diagnostics/errors.
+const lastStateInsertAt = new Map<number, number>()
+const lastRawPayloadAt = new Map<number, number>()
+const STATE_SAMPLE_INTERVAL_MS = 10_000
+const RAW_PAYLOAD_INTERVAL_MS = 5 * 60_000
+
 // Enable WAL mode for better concurrent access
 db.pragma('journal_mode = WAL')
 
@@ -107,6 +114,10 @@ export function initDatabase(): void {
       ON operation_logs(device_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_operation_logs_type
       ON operation_logs(operation_type);
+    CREATE INDEX IF NOT EXISTS idx_operation_logs_timestamp
+      ON operation_logs(timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_operation_logs_type_timestamp
+      ON operation_logs(operation_type, timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_automation_rules_enabled
       ON automation_rules(enabled);
     CREATE INDEX IF NOT EXISTS idx_automation_rules_device
@@ -186,7 +197,7 @@ export function insertDeviceState(
     acOutputWatts: number
     dcOutputWatts: number
     temperature: number
-    rawData: string
+    rawData?: string | null
     // New fields for detailed charts
     bmsMasterVol?: number | null
     extraBattery1Soc?: number | null
@@ -197,6 +208,16 @@ export function insertDeviceState(
     extraBattery2Vol?: number | null
   }
 ) {
+  const now = Date.now()
+  const lastInsert = lastStateInsertAt.get(deviceId) ?? 0
+  if (now - lastInsert < STATE_SAMPLE_INTERVAL_MS) return null
+  lastStateInsertAt.set(deviceId, now)
+
+  const containsError = state.rawData ? /"[^"]*(?:errCode|faultCode)"\s*:\s*(?!0(?:[,}]))/.test(state.rawData) : false
+  const lastRaw = lastRawPayloadAt.get(deviceId) ?? 0
+  const rawData = containsError || now - lastRaw >= RAW_PAYLOAD_INTERVAL_MS ? state.rawData ?? null : null
+  if (rawData) lastRawPayloadAt.set(deviceId, now)
+
   const stmt = db.prepare(`
     INSERT INTO device_states (
       device_id, battery_soc, battery_watts, ac_input_watts,
@@ -215,7 +236,7 @@ export function insertDeviceState(
     state.acOutputWatts,
     state.dcOutputWatts,
     state.temperature,
-    state.rawData,
+    rawData,
     state.bmsMasterVol ?? null,
     state.extraBattery1Soc ?? null,
     state.extraBattery1Temp ?? null,

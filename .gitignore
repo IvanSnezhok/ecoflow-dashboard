@@ -41,3 +41,9 @@ coverage
 
 # Claude
 .claude/
+
+# Local development databases and generated Vite config
+ecoflow.db
+server/ecoflow.db
+vite.config.js
+vite.config.d.ts

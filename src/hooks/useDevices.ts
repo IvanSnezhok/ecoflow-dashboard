@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { api } from '@/services/api'
 
-const POLLING_INTERVAL = 3000 // 3 seconds (was 1 second)
+const POLLING_INTERVAL = 10000 // Server collector is authoritative; polling is a REST fallback.
 
 export function useDevices() {
   const {

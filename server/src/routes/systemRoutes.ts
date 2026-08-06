@@ -39,6 +39,13 @@ router.get('/version', async (_req: Request, res: Response) => {
  */
 router.post('/update', async (_req: Request, res: Response) => {
   try {
+    if (!updateService.isEnabled()) {
+      return res.status(403).json({
+        success: false,
+        error: 'GitHub updates are disabled. Configure DASHBOARD_UPDATES_ENABLED=true only on a protected deployment.',
+      });
+    }
+
     // Check if this is a git repository
     if (!versionService.isGitRepo()) {
       return res.status(400).json({

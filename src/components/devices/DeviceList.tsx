@@ -1,9 +1,9 @@
 import { DeviceCard } from './DeviceCard'
-import { useDevices } from '@/hooks/useDevices'
+import { useDeviceStore } from '@/stores/deviceStore'
 import { Battery } from 'lucide-react'
 
 export function DeviceList() {
-  const { devices, isLoading, error } = useDevices()
+  const { devices, isLoading, error } = useDeviceStore()
 
   if (isLoading) {
     return (

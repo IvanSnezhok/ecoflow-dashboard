@@ -24,4 +24,9 @@ export const config = {
     port: parseInt(process.env.PORT || '3001', 10),
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   },
+  updates: {
+    enabled: process.env.DASHBOARD_UPDATES_ENABLED === 'true',
+    branch: process.env.DASHBOARD_UPDATE_BRANCH || 'main',
+    systemdService: process.env.DASHBOARD_SYSTEMD_SERVICE || '',
+  },
 }

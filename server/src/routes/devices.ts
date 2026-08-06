@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { ecoflowApi } from "../services/ecoflowApi.js";
 import { mqttService } from "../services/mqttService.js";
+import { getDeviceProfile } from "../services/deviceProfiles.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -53,7 +54,7 @@ interface DevicesCache {
   timestamp: number;
 }
 let devicesCache: DevicesCache = { data: null, timestamp: 0 };
-const CACHE_TTL = 500; // 500ms cache - allows ~2 real API calls per second
+const CACHE_TTL = 10_000; // Coalesce browser tabs; background collection remains the durable sampler.
 
 // Get all devices with their latest state
 router.get("/", async (_req: Request, res: Response) => {
@@ -96,6 +97,22 @@ router.get("/", async (_req: Request, res: Response) => {
             }
 
             const q = quota as Record<string, unknown>;
+            const profile = getDeviceProfile(apiDevice.productName);
+            // An unknown product may use a completely different quota schema. Keep it
+            // visible as an online read-only device rather than fabricating zero metrics.
+            if (profile.id === "unclassified-read-only") {
+              return {
+                serialNumber: apiDevice.sn,
+                deviceType: apiDevice.productName,
+                name: apiDevice.deviceName,
+                online: true,
+                lastSeen: new Date().toISOString(),
+                state: null,
+                profileId: profile.id,
+                category: profile.category,
+                capabilities: profile.capabilities,
+              };
+            }
 
             // Helper function to parse extra battery data
             const parseExtraBattery = (prefix: string) => {
@@ -289,6 +306,9 @@ router.get("/", async (_req: Request, res: Response) => {
           lastSeen: new Date().toISOString(),
           state,
           lastKnownErrors,
+          profileId: getDeviceProfile(apiDevice.productName).id,
+          category: getDeviceProfile(apiDevice.productName).category,
+          capabilities: getDeviceProfile(apiDevice.productName).capabilities,
         };
       }),
     );
@@ -332,23 +352,14 @@ router.get("/:sn", async (req: Request, res: Response) => {
       return;
     }
 
+    const profile = getDeviceProfile(device.device_type);
     let state = null;
-    if (device.online) {
+    if (device.online && profile.id !== "unclassified-read-only") {
       const quota = await ecoflowApi.getDeviceQuota(sn);
-      state = {
-        serialNumber: sn,
-        batterySoc: quota.soc || 0,
-        batteryWatts: (quota.wattsInSum || 0) - (quota.wattsOutSum || 0),
-        acInputWatts: (quota as Record<string, number>).acInWatts || 0,
-        solarInputWatts: (quota as Record<string, number>).pvInWatts || 0,
-        acOutputWatts: (quota as Record<string, number>).acOutWatts || 0,
-        dcOutputWatts: (quota as Record<string, number>).dcOutWatts || 0,
-        temperature: (quota as Record<string, number>).temp || 0,
-        acOutEnabled: (quota as Record<string, number>).acOutState === 1,
-        dcOutEnabled: (quota as Record<string, number>).dcOutState === 1,
-        timestamp: new Date().toISOString(),
-      };
+      const normalized = profile.normalizeQuota(quota as Record<string, unknown>);
+      state = normalized ? { serialNumber: sn, ...normalized, timestamp: new Date().toISOString() } : null;
     }
+
 
     res.json({
       serialNumber: device.serial_number,
@@ -356,6 +367,9 @@ router.get("/:sn", async (req: Request, res: Response) => {
       name: device.name,
       online: device.online === 1,
       state,
+      profileId: profile.id,
+      category: profile.category,
+      capabilities: profile.capabilities,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

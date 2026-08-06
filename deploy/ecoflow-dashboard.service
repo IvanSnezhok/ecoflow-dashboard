@@ -1,0 +1,15 @@
+[Unit]
+Description=EcoFlow Dashboard API
+After=network.target
+
+[Service]
+Type=simple
+User=ecoflow
+WorkingDirectory=/opt/ecoflow-dashboard
+EnvironmentFile=/opt/ecoflow-dashboard/.env
+ExecStart=/usr/bin/node /opt/ecoflow-dashboard/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

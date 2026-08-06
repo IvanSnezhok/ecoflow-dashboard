@@ -403,7 +403,7 @@ export default function DeviceDetail() {
             {state ? (
               <>
                 {/* AC Output Toggle */}
-                <div className="flex items-center justify-between">
+                {device.capabilities?.acOutput !== false && <div className="flex items-center justify-between">
                   <div>
                     <span className="text-sm font-medium">AC Output</span>
                     <p className="text-[10px] text-muted-foreground">
@@ -416,7 +416,7 @@ export default function DeviceDetail() {
                     disabled={!device.online || isTogglingAc}
                     size="md"
                   />
-                </div>
+                </div>}
 
                 {/* Status Info */}
                 <div className="pt-3 border-t border-border/50">
@@ -483,7 +483,7 @@ export default function DeviceDetail() {
                     step={100}
                     unit="W"
                     onChange={handleSetChargePower}
-                    disabled={!device.online || !!state.fastChargingEnabled || isSettingChargePower}
+                    disabled={!device.online || (device.capabilities !== undefined && device.capabilities.chargingPower === undefined) || !!state.fastChargingEnabled || isSettingChargePower}
                     accentColor="purple"
                   />
                   {state.fastChargingEnabled && (
@@ -500,7 +500,7 @@ export default function DeviceDetail() {
                   step={1}
                   unit="%"
                   onChange={handleSetMaxSoc}
-                  disabled={!device.online || isSettingMaxSoc}
+                  disabled={!device.online || device.capabilities?.chargeLimits === false || isSettingMaxSoc}
                   accentColor="green"
                 />
                 <TechnicalSlider
@@ -511,7 +511,7 @@ export default function DeviceDetail() {
                   step={1}
                   unit="%"
                   onChange={handleSetMinSoc}
-                  disabled={!device.online || isSettingMinSoc}
+                  disabled={!device.online || device.capabilities?.chargeLimits === false || isSettingMinSoc}
                   accentColor="blue"
                 />
               </div>
