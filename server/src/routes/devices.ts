@@ -742,15 +742,20 @@ router.get("/:sn/history", async (req: Request, res: Response) => {
       const durationMs = new Date(customTo).getTime() - new Date(customFrom).getTime();
       const durationHours = durationMs / (1000 * 60 * 60);
 
+      // Bound response/rendering cost for arbitrary custom ranges. The client
+      // draws every returned point, so a multi-year raw query can otherwise freeze it.
       if (durationHours <= 1) {
         aggregation = "none";
       } else if (durationHours <= 24) {
         aggregation = "1min";
       } else if (durationHours <= 168) {
-        // 7 days
         aggregation = "5min";
-      } else {
+      } else if (durationHours <= 720) { // 30 days
         aggregation = "15min";
+      } else if (durationHours <= 2880) { // 120 days
+        aggregation = "1hour";
+      } else {
+        aggregation = "6hour";
       }
     } else {
       // Preset period
