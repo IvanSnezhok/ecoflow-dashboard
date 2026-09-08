@@ -1,9 +1,13 @@
 import Database, { type Database as DatabaseType } from 'better-sqlite3'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { compressRawData, loadDictionary, parseRawData } from '../lib/rawDataCodec.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const dbPath = path.resolve(__dirname, '../../data/ecoflow.db')
+// ECOFLOW_DB_PATH lets tests and maintenance scripts point at a copy of the database.
+const dbPath = process.env.ECOFLOW_DB_PATH
+  ? path.resolve(process.env.ECOFLOW_DB_PATH)
+  : path.resolve(__dirname, '../../data/ecoflow.db')
 
 export const db: DatabaseType = new Database(dbPath)
 
@@ -44,6 +48,7 @@ export function initDatabase(): void {
       dc_output_watts INTEGER,
       temperature REAL,
       raw_data TEXT,
+      raw_data_z BLOB,
       timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
@@ -151,6 +156,9 @@ export function initDatabase(): void {
   // Run migrations for new columns
   migrateDatabase()
 
+  // Reads of raw_data_z are impossible without the dictionary, so refuse to start without it.
+  loadDictionary()
+
   console.log('Database initialized')
 }
 
@@ -167,6 +175,8 @@ function migrateDatabase(): void {
     { name: 'extra_battery2_soc', type: 'INTEGER' },
     { name: 'extra_battery2_temp', type: 'REAL' },
     { name: 'extra_battery2_vol', type: 'INTEGER' },
+    // Dictionary-compressed copy of raw_data; see lib/rawDataCodec.ts.
+    { name: 'raw_data_z', type: 'BLOB' },
   ]
 
   for (const col of newColumns) {
@@ -238,14 +248,19 @@ export function insertDeviceState(
   const rawData = containsError || now - lastRaw >= RAW_PAYLOAD_INTERVAL_MS ? state.rawData ?? null : null
   if (rawData) lastRawPayloadAt.set(deviceId, now)
 
+  // Dual write: raw_data_z is what readers use, raw_data stays populated so an older
+  // build of the app (or a rollback) still sees a complete history. The legacy column
+  // is dropped only by `migrateRawData.ts --final`, once the owner confirms.
+  const rawDataZ = rawData ? compressRawData(rawData) : null
+
   const stmt = db.prepare(`
     INSERT INTO device_states (
       device_id, battery_soc, battery_watts, ac_input_watts,
       solar_input_watts, ac_output_watts, dc_output_watts,
-      temperature, raw_data,
+      temperature, raw_data, raw_data_z,
       bms_master_vol, extra_battery1_soc, extra_battery1_temp, extra_battery1_vol,
       extra_battery2_soc, extra_battery2_temp, extra_battery2_vol
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   return stmt.run(
     deviceId,
@@ -257,6 +272,7 @@ export function insertDeviceState(
     state.dcOutputWatts,
     state.temperature,
     rawData,
+    rawDataZ,
     state.bmsMasterVol ?? null,
     state.extraBattery1Soc ?? null,
     state.extraBattery1Temp ?? null,
@@ -276,6 +292,14 @@ export function getLatestDeviceState(deviceId: number) {
   `).get(deviceId)
 }
 
+// A device_states row read for its raw payload: raw_data_z is preferred, raw_data
+// is the legacy fallback that stays populated until the --final migration step.
+interface RawStateRow {
+  raw_data: string | null;
+  raw_data_z: Buffer | null;
+  timestamp: string;
+}
+
 // Get last known error codes for a device (for offline state)
 export interface LastKnownErrors {
   bmsMasterErrCode: number;
@@ -290,29 +314,27 @@ export interface LastKnownErrors {
 
 export function getLastKnownErrors(deviceId: number): LastKnownErrors | null {
   const state = db.prepare(`
-    SELECT raw_data, timestamp FROM device_states
+    SELECT raw_data, raw_data_z, timestamp FROM device_states
     WHERE device_id = ?
     ORDER BY timestamp DESC
     LIMIT 1
-  `).get(deviceId) as { raw_data: string; timestamp: string } | undefined;
+  `).get(deviceId) as RawStateRow | undefined;
 
-  if (!state || !state.raw_data) return null;
+  if (!state) return null;
 
-  try {
-    const rawData = JSON.parse(state.raw_data);
-    return {
-      bmsMasterErrCode: rawData["bmsMaster.errCode"] ?? 0,
-      invErrCode: rawData["inv.errCode"] ?? 0,
-      mpptFaultCode: rawData["mppt.faultCode"] ?? 0,
-      overloadState: rawData["pd.iconOverloadState"] ?? 0,
-      emsIsNormal: (rawData["ems.emsIsNormalFlag"] ?? 1) === 1,
-      bmsSlave1ErrCode: rawData["bmsSlave1.errCode"],
-      bmsSlave2ErrCode: rawData["bmsSlave2.errCode"],
-      timestamp: state.timestamp,
-    };
-  } catch {
-    return null;
-  }
+  const rawData = parseRawData(state) as Record<string, number | undefined> | null;
+  if (!rawData) return null;
+
+  return {
+    bmsMasterErrCode: rawData["bmsMaster.errCode"] ?? 0,
+    invErrCode: rawData["inv.errCode"] ?? 0,
+    mpptFaultCode: rawData["mppt.faultCode"] ?? 0,
+    overloadState: rawData["pd.iconOverloadState"] ?? 0,
+    emsIsNormal: (rawData["ems.emsIsNormalFlag"] ?? 1) === 1,
+    bmsSlave1ErrCode: rawData["bmsSlave1.errCode"],
+    bmsSlave2ErrCode: rawData["bmsSlave2.errCode"],
+    timestamp: state.timestamp,
+  };
 }
 
 // Historical data for charts
@@ -555,12 +577,12 @@ export interface ErrorHistoryEntry {
 
 export function getErrorHistory(deviceId: number, limit: number = 100): ErrorHistoryEntry[] {
   const states = db.prepare(`
-    SELECT raw_data, timestamp
+    SELECT raw_data, raw_data_z, timestamp
     FROM device_states
     WHERE device_id = ?
     ORDER BY timestamp DESC
     LIMIT ?
-  `).all(deviceId, limit * 10) as Array<{ raw_data: string; timestamp: string }>;
+  `).all(deviceId, limit * 10) as RawStateRow[];
 
   const errors: ErrorHistoryEntry[] = [];
   const seen = new Set<string>();
@@ -574,39 +596,34 @@ export function getErrorHistory(deviceId: number, limit: number = 100): ErrorHis
     { type: 'extraBattery2', field: 'bmsSlave2.errCode' },
   ];
 
+  // BMS codes that indicate battery state, not errors
+  // 5 = discharged state, 23 = charged state
+  const BMS_STATE_CODES = new Set([5, 23]);
+
   for (const state of states) {
-    if (!state.raw_data) continue;
+    const data = parseRawData(state) as Record<string, number | undefined> | null;
+    if (!data) continue;
 
-    try {
-      const data = JSON.parse(state.raw_data);
+    for (const { type, field } of errorFields) {
+      const code = data[field];
+      if (code && code !== 0) {
+        // Skip BMS state codes (not actual errors)
+        if (type === 'bms' && BMS_STATE_CODES.has(code)) continue;
 
-      // BMS codes that indicate battery state, not errors
-      // 5 = discharged state, 23 = charged state
-      const BMS_STATE_CODES = new Set([5, 23]);
-
-      for (const { type, field } of errorFields) {
-        const code = data[field];
-        if (code && code !== 0) {
-          // Skip BMS state codes (not actual errors)
-          if (type === 'bms' && BMS_STATE_CODES.has(code)) continue;
-
-          // Group by type-code-minute to avoid duplicates
-          const key = `${type}-${code}-${state.timestamp.substring(0, 16)}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            errors.push({
-              timestamp: state.timestamp,
-              errorType: type,
-              errorCode: code,
-            });
-          }
+        // Group by type-code-minute to avoid duplicates
+        const key = `${type}-${code}-${state.timestamp.substring(0, 16)}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          errors.push({
+            timestamp: state.timestamp,
+            errorType: type,
+            errorCode: code,
+          });
         }
       }
-
-      if (errors.length >= limit) break;
-    } catch {
-      // Skip invalid JSON
     }
+
+    if (errors.length >= limit) break;
   }
 
   return errors.slice(0, limit);
