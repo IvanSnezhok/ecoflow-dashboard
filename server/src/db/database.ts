@@ -380,6 +380,15 @@ export interface HistoryDataPoint {
 
 export type AggregationType = 'none' | '1min' | '5min' | '15min' | '1hour' | '6hour'
 
+/**
+ * Safety cap on every history range read. A 30-day window is ~130K rows today,
+ * and a single unbounded fetch large enough to outlive the writer's WAL snapshot
+ * is what surfaces as `database disk image is malformed` (see "WAL and long
+ * reads" in the README). Nothing the UI draws needs anywhere near this many
+ * points, so the cap only bites if the retention window is misconfigured.
+ */
+const HISTORY_ROW_LIMIT = 100000
+
 // Convert ISO timestamp to SQLite format (2025-12-23T17:30:23.335Z -> 2025-12-23 17:30:23)
 function toSqliteTimestamp(isoString: string): string {
   return isoString.replace('T', ' ').replace(/\.\d{3}Z$/, '').replace('Z', '')
@@ -419,6 +428,7 @@ export function getDeviceHistory(options: {
       FROM device_states
       WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
       ORDER BY timestamp ASC
+      LIMIT ${HISTORY_ROW_LIMIT}
     `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
     return rows
   }
@@ -473,6 +483,7 @@ export function getDeviceHistory(options: {
       GROUP BY strftime('%Y-%m-%dT%H:', timestamp) ||
         printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / ${interval}) * ${interval})
       ORDER BY timestamp ASC
+      LIMIT ${HISTORY_ROW_LIMIT}
     `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
     return rows
   }
@@ -503,6 +514,7 @@ export function getDeviceHistory(options: {
       GROUP BY strftime('%Y-%m-%dT', timestamp) ||
         printf('%02d', (CAST(strftime('%H', timestamp) AS INTEGER) / 6) * 6)
       ORDER BY timestamp ASC
+      LIMIT ${HISTORY_ROW_LIMIT}
     `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
     return rows
   }
@@ -529,6 +541,7 @@ export function getDeviceHistory(options: {
     WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
     GROUP BY strftime('${groupFormat}', timestamp)
     ORDER BY timestamp ASC
+    LIMIT ${HISTORY_ROW_LIMIT}
   `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
 
   return rows

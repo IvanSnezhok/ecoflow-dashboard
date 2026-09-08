@@ -9,10 +9,13 @@
  * primary-key-forward statements. Long scans driven by
  * idx_device_states_device_timestamp outlive the live writer's WAL snapshot and
  * fail with `database disk image is malformed`; `ORDER BY id DESC` does the same.
+ * Every read still goes through `withMalformedRetry` in case one loses the race
+ * anyway.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { withMalformedRetry } from './lib/sqliteRetry.mjs'
 
 const require = createRequire(path.join(process.cwd(), 'server/'))
 const Database = require('better-sqlite3')
@@ -68,7 +71,7 @@ const probeRow = src.prepare('SELECT id, device_id FROM device_states WHERE id >
 const firstIdByDevice = new Map()
 for (let i = 0; i < PROBE_COUNT; i++) {
   const probe = minId + Math.floor(((maxId - minId) * i) / (PROBE_COUNT - 1))
-  const row = probeRow.get(probe)
+  const row = withMalformedRetry(() => probeRow.get(probe), { label: `probe id>=${probe}` })
   if (row && !firstIdByDevice.has(row.device_id)) firstIdByDevice.set(row.device_id, row.id)
 }
 
@@ -93,7 +96,7 @@ for (const [deviceId, startId] of [...firstIdByDevice].sort((a, b) => a[0] - b[0
   const wanted = []
   let cursor = startId - 1
   for (let batch = 0; batch < SCAN_BATCH_BUDGET && wanted.length < perDevice; batch++) {
-    const chunk = scanBatch.all(cursor)
+    const chunk = withMalformedRetry(() => scanBatch.all(cursor), { label: `scan after id=${cursor}` })
     if (chunk.length === 0) break
     cursor = chunk[chunk.length - 1].id
     for (const row of chunk) {

@@ -8,15 +8,21 @@
  * Idempotent: only rows with `raw_data_z IS NULL AND raw_data IS NOT NULL` are
  * touched, so an interrupted run is resumed by re-running the same command.
  * The scan is strictly forward by id — `ORDER BY id DESC` races the writer's WAL
- * and reports `database disk image is malformed`.
+ * and reports `database disk image is malformed`. Each batch is additionally
+ * retried through `withMalformedRetry`; a batch that keeps failing aborts the run
+ * non-zero and names the id to resume from.
  */
 import Database, { type Database as DatabaseType } from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
 import { compressRawData, decompressRawData, loadDictionary } from '../lib/rawDataCodec.js'
+import { MALFORMED_RETRIES, isMalformedError, withMalformedRetry } from '../lib/sqliteRetry.js'
 
 const BATCH_SIZE = 5000
 const SPOT_CHECK_ROWS = 100
+
+/** A malformed-image error that survived its retries: the operator has to re-run. */
+class MigrationAborted extends Error {}
 
 interface Options {
   dbPath: string
@@ -112,7 +118,21 @@ function migrate(db: DatabaseType, dbPath: string): number {
   let zBytes = 0
 
   for (;;) {
-    const rows = selectBatch.all(lastId) as Array<{ id: number; raw_data: string }>
+    let rows: Array<{ id: number; raw_data: string }>
+    try {
+      rows = withMalformedRetry(
+        () => selectBatch.all(lastId) as Array<{ id: number; raw_data: string }>,
+        { label: `select batch after id=${lastId}` }
+      )
+    } catch (error) {
+      if (!isMalformedError(error)) throw error
+      throw new MigrationAborted(
+        `Batch after id=${lastId} still reported "${(error as Error).message}" after ` +
+          `${MALFORMED_RETRIES} retries. ${migrated} rows were migrated and committed. ` +
+          'Stop the writer if it is running and re-run the same command — the migration is ' +
+          'idempotent and resumes from where it stopped.'
+      )
+    }
     if (rows.length === 0) break
 
     const encoded = rows.map(row => {
@@ -235,7 +255,14 @@ function main(): void {
   const db = open(opts.dbPath)
 
   try {
-    migrate(db, opts.dbPath)
+    try {
+      migrate(db, opts.dbPath)
+    } catch (error) {
+      if (!(error instanceof MigrationAborted)) throw error
+      console.error(`Migration aborted: ${error.message}`)
+      process.exitCode = 1
+      return
+    }
 
     let verified = false
     if (opts.verify) {

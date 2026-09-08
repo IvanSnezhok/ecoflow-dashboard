@@ -8,6 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { withMalformedRetry } from './lib/sqliteRetry.mjs'
 
 const require = createRequire(path.join(process.cwd(), 'server/'))
 const Database = require('better-sqlite3')
@@ -17,8 +18,10 @@ if (!fs.existsSync(dbPath)) throw new Error(`Database not found: ${dbPath}`)
 
 const walBefore = fs.existsSync(`${dbPath}-wal`) ? fs.statSync(`${dbPath}-wal`).size : 0
 const db = new Database(dbPath)
-const [busy, walPages, checkpointed] = db.pragma('wal_checkpoint(TRUNCATE)', { simple: false })
-  .flatMap(row => [row.busy, row.log, row.checkpointed])
+const [busy, walPages, checkpointed] = withMalformedRetry(
+  () => db.pragma('wal_checkpoint(TRUNCATE)', { simple: false }),
+  { label: 'wal_checkpoint(TRUNCATE)' }
+).flatMap(row => [row.busy, row.log, row.checkpointed])
 db.close()
 
 const walAfter = fs.existsSync(`${dbPath}-wal`) ? fs.statSync(`${dbPath}-wal`).size : 0

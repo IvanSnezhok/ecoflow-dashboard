@@ -134,10 +134,62 @@ runs**, and it rewrites the whole file, so leave it until the migration has been
 running in production long enough to trust. Use `--no-vacuum` to drop the column
 without reclaiming space yet.
 
-Every statement is a short primary-key-forward range. Long scans driven by
-`idx_device_states_device_timestamp`, and anything using `ORDER BY id DESC`, outlive
-the live writer's WAL snapshot on a table this size and fail with `database disk
-image is malformed`.
+### WAL and long reads
+
+A read of the live database that returns too much at once fails with `database
+disk image is malformed`. **The file is not corrupt.** The database is in WAL
+mode and the writer checkpoints continuously; a reader that holds its snapshot
+long enough for the WAL to be recycled underneath it loses that snapshot, and
+SQLite reports the loss as a malformed image. Running the identical statement
+again succeeds.
+
+The threshold measured on this database is roughly **150K rows in one `fetchall`**
+on `device_states`, which is where a single result set gets large enough (~7.4 KB
+per row from `raw_data`) for the read to stay open past a checkpoint. Two things
+make it worse and are avoided everywhere: `ORDER BY id DESC`, and long scans
+driven by `idx_device_states_device_timestamp` rather than the primary key.
+
+- **Application queries are safe.** Every read the server issues is bounded — the
+  history ranges are capped at `LIMIT 100000`, logs and error lists paginate, and
+  the single-state reads are `LIMIT 1`. None of them can reach the threshold.
+- **Maintenance scripts scan forward by primary key**, committing in batches of
+  5000 (`migrateRawData`) or 500 (`makeTestDb`), so no single result set is
+  anywhere near the limit.
+- **Every such read is additionally wrapped in `withMalformedRetry`**
+  (`server/src/lib/sqliteRetry.ts`, mirrored for the plain-node scripts in
+  `scripts/lib/sqliteRetry.mjs`): on a malformed-image error it waits 2s and
+  retries the same statement, up to 3 times. Anything that is not a malformed
+  image is never retried.
+- If a batch still fails after 3 retries, `migrateRawData` **aborts non-zero** and
+  prints the `id` it stopped at. The migration is idempotent, so the fix is to
+  stop the writer and re-run the same command; it resumes from that point.
+
+`npm run test:migrate` covers both halves of this: the helper's retry/give-up
+behaviour, and a 5000-row copy migrated with `--verify` end to end.
+
+### Measuring read speed
+
+`scripts/dbSpeedCheck.mjs` opens the database read-only and times the 1-day,
+7-day and 30-day history windows, printing rows, ms and MB for two reads per
+window: `history` (the columns `/history` selects — what the UI pays) and `raw`
+(the raw payload columns, which is what the migration shrinks).
+
+```bash
+node scripts/dbSpeedCheck.mjs                              # live database, read-only
+node scripts/dbSpeedCheck.mjs --db /tmp/eco_test.db        # a copy from makeTestDb
+```
+
+Windows end at the newest row by default, so it works unchanged on a small copy;
+`--anchor now` uses the wall clock instead. It also prints `EXPLAIN QUERY PLAN`
+for the range read, which must say `SEARCH device_states USING INDEX
+idx_device_states_device_timestamp` — a `SCAN` there would mean the index is not
+being used.
+
+On the live database before the migration, a 30-day window for device 122 read
+129,616 rows in 2,678 ms because it pulled ~490 MB of `raw_data` (~7.4 KB per
+row); 1 day was 23 ms and 7 days 89 ms. The blobs are ~0.071–0.080x the size, so
+the same window moves ~35 MB after `--final` — measured on a 5000-row copy the
+raw read went from 17.6 MB / 21 ms to 1.0 MB / 4 ms.
 
 ### Rollout
 
@@ -171,6 +223,7 @@ still populated, so an older build reads it directly.
 
 ```bash
 npm run test:codec    # roundtrip on a real 242-key row, corrupt-blob rejection
+npm run test:migrate  # malformed-image retry helper + migration on a 5000-row copy
 npm run test:smoke    # /history + /errors return identical JSON before/after/-final
 ```
 
