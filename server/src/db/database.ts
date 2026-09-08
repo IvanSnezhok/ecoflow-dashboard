@@ -162,6 +162,24 @@ export function initDatabase(): void {
   console.log('Database initialized')
 }
 
+// `raw_data` disappears once the owner runs `migrateRawData.ts --final`. Every
+// statement that mentions it is built from this so the server keeps working
+// either side of that step.
+let legacyRawDataPresent: boolean | null = null
+
+function hasLegacyRawData(): boolean {
+  if (legacyRawDataPresent === null) {
+    const info = db.prepare('PRAGMA table_info(device_states)').all() as Array<{ name: string }>
+    legacyRawDataPresent = info.some(col => col.name === 'raw_data')
+  }
+  return legacyRawDataPresent
+}
+
+// Selecting a literal NULL keeps the result shape identical after the drop.
+function rawPayloadColumns(): string {
+  return hasLegacyRawData() ? 'raw_data, raw_data_z' : 'NULL AS raw_data, raw_data_z'
+}
+
 // Migration for new chart data columns
 function migrateDatabase(): void {
   const tableInfo = db.prepare("PRAGMA table_info(device_states)").all() as Array<{ name: string }>
@@ -185,6 +203,8 @@ function migrateDatabase(): void {
       console.log(`Migration: Added column ${col.name} to device_states`)
     }
   }
+
+  legacyRawDataPresent = existingColumns.has('raw_data')
 }
 
 // Device operations
@@ -253,14 +273,15 @@ export function insertDeviceState(
   // is dropped only by `migrateRawData.ts --final`, once the owner confirms.
   const rawDataZ = rawData ? compressRawData(rawData) : null
 
+  const legacy = hasLegacyRawData()
   const stmt = db.prepare(`
     INSERT INTO device_states (
       device_id, battery_soc, battery_watts, ac_input_watts,
       solar_input_watts, ac_output_watts, dc_output_watts,
-      temperature, raw_data, raw_data_z,
+      temperature, ${legacy ? 'raw_data, ' : ''}raw_data_z,
       bms_master_vol, extra_battery1_soc, extra_battery1_temp, extra_battery1_vol,
       extra_battery2_soc, extra_battery2_temp, extra_battery2_vol
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${legacy ? '?, ' : ''}?, ?, ?, ?, ?, ?, ?, ?)
   `)
   return stmt.run(
     deviceId,
@@ -271,7 +292,7 @@ export function insertDeviceState(
     state.acOutputWatts,
     state.dcOutputWatts,
     state.temperature,
-    rawData,
+    ...(legacy ? [rawData] : []),
     rawDataZ,
     state.bmsMasterVol ?? null,
     state.extraBattery1Soc ?? null,
@@ -314,7 +335,7 @@ export interface LastKnownErrors {
 
 export function getLastKnownErrors(deviceId: number): LastKnownErrors | null {
   const state = db.prepare(`
-    SELECT raw_data, raw_data_z, timestamp FROM device_states
+    SELECT ${rawPayloadColumns()}, timestamp FROM device_states
     WHERE device_id = ?
     ORDER BY timestamp DESC
     LIMIT 1
@@ -577,7 +598,7 @@ export interface ErrorHistoryEntry {
 
 export function getErrorHistory(deviceId: number, limit: number = 100): ErrorHistoryEntry[] {
   const states = db.prepare(`
-    SELECT raw_data, raw_data_z, timestamp
+    SELECT ${rawPayloadColumns()}, timestamp
     FROM device_states
     WHERE device_id = ?
     ORDER BY timestamp DESC
