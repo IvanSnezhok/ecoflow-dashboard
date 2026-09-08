@@ -150,8 +150,8 @@ make it worse and are avoided everywhere: `ORDER BY id DESC`, and long scans
 driven by `idx_device_states_device_timestamp` rather than the primary key.
 
 - **Application queries are safe.** Every read the server issues is bounded — the
-  history ranges cover at most the retention window, logs and error lists
-  paginate, and the single-state reads are `LIMIT 1`.
+  history ranges are capped at `LIMIT 100000`, logs and error lists paginate, and
+  the single-state reads are `LIMIT 1`. None of them can reach the threshold.
 - **Maintenance scripts scan forward by primary key**, committing in batches of
   5000 (`migrateRawData`) or 500 (`makeTestDb`), so no single result set is
   anywhere near the limit.
@@ -166,6 +166,30 @@ driven by `idx_device_states_device_timestamp` rather than the primary key.
 
 `npm run test:migrate` covers both halves of this: the helper's retry/give-up
 behaviour, and a 5000-row copy migrated with `--verify` end to end.
+
+### Measuring read speed
+
+`scripts/dbSpeedCheck.mjs` opens the database read-only and times the 1-day,
+7-day and 30-day history windows, printing rows, ms and MB for two reads per
+window: `history` (the columns `/history` selects — what the UI pays) and `raw`
+(the raw payload columns, which is what the migration shrinks).
+
+```bash
+node scripts/dbSpeedCheck.mjs                              # live database, read-only
+node scripts/dbSpeedCheck.mjs --db /tmp/eco_test.db        # a copy from makeTestDb
+```
+
+Windows end at the newest row by default, so it works unchanged on a small copy;
+`--anchor now` uses the wall clock instead. It also prints `EXPLAIN QUERY PLAN`
+for the range read, which must say `SEARCH device_states USING INDEX
+idx_device_states_device_timestamp` — a `SCAN` there would mean the index is not
+being used.
+
+On the live database before the migration, a 30-day window for device 122 read
+129,616 rows in 2,678 ms because it pulled ~490 MB of `raw_data` (~7.4 KB per
+row); 1 day was 23 ms and 7 days 89 ms. The blobs are ~0.071–0.080x the size, so
+the same window moves ~35 MB after `--final` — measured on a 5000-row copy the
+raw read went from 17.6 MB / 21 ms to 1.0 MB / 4 ms.
 
 ### Rollout
 
