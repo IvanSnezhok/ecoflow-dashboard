@@ -51,7 +51,11 @@ class UpdateService extends EventEmitter {
       child.stdout?.on("data", (data) => { output += data.toString(); });
       child.stderr?.on("data", (data) => { output += data.toString(); });
       child.once("error", (error) => { clearTimeout(timer); reject(error); });
-      child.once("close", (code) => { clearTimeout(timer); code === 0 ? resolve(output.trim()) : reject(new Error(`${command} failed (${code}): ${output.slice(-2000)}`)); });
+      child.once("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve(output.trim());
+        else reject(new Error(`${command} failed (${code}): ${output.slice(-2000)}`));
+      });
     });
   }
   private async targetCommit(): Promise<string> { return this.run("git", ["rev-parse", `origin/${config.updates.branch}`], "fetching", "Resolving GitHub revision..."); }
