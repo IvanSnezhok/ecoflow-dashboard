@@ -15,7 +15,8 @@
     "test:profiles": "npm run test:profiles --prefix server",
     "test:resilience": "npm run test:resilience --prefix server",
     "test:codec": "npm run test:codec --prefix server",
-    "test:smoke": "node scripts/smokeHistoryApi.mjs"
+    "test:smoke": "node scripts/smokeHistoryApi.mjs",
+    "test:migrate": "npm run build:backend && node scripts/testMigrationRetry.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.13",
