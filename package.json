@@ -13,7 +13,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:profiles": "npm run test:profiles --prefix server",
-    "test:resilience": "npm run test:resilience --prefix server"
+    "test:resilience": "npm run test:resilience --prefix server",
+    "test:codec": "npm run test:codec --prefix server",
+    "test:smoke": "node scripts/smokeHistoryApi.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.13",
