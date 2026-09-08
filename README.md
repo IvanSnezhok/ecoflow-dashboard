@@ -73,6 +73,111 @@ this and refuses to run; if it does, fix the checkout once:
 git rm --cached server/data/ecoflow.db server/data/ecoflow.db-shm server/data/ecoflow.db-wal
 ```
 
+## Telemetry database
+
+`server/data/ecoflow.db` is a SQLite database in WAL mode. Almost all of it is one
+column: `device_states.raw_data`, the flat EcoFlow quota snapshot. Roughly 242 keys
+repeat verbatim on every row at ~7.4 KB per row, which put the file at **30.3 GiB
+across 4.04M rows**.
+
+Those rows are stored compressed in `device_states.raw_data_z`: a one-byte format
+flag (`0x01`) followed by a zstd frame at level 3, compressed against a dictionary
+trained on real rows. Measured on live data this is **0.071–0.078x per row**, so the
+table lands at roughly **1–2 GiB (-93…-97%)**. Nothing is dropped, downsampled or
+key-slimmed — every row decompresses back to byte-identical JSON.
+
+`server/src/lib/rawDataCodec.ts` owns the format. Writes go to both columns while the
+migration is in flight, and reads prefer `raw_data_z` and fall back to `raw_data`, so
+an older build of the server keeps working against a migrated database.
+
+### The dictionary
+
+`server/data/zstd.dict` (112 KB) is tracked in git and **required** — a missing
+dictionary makes every `raw_data_z` row unreadable, so the server refuses to start
+without one. It is looked for in this order:
+
+1. `$ECOFLOW_ZSTD_DICT`
+2. `server/data/zstd.dict`
+3. `server/dict/zstd.dict` — the copy baked into the Docker image, which survives an
+   empty `server/data` volume
+
+Retrain once a year, or after an EcoFlow firmware change alters the quota key set. A
+stale dictionary never breaks anything; compression just degrades by roughly 2–3x.
+Node can *use* zstd dictionaries but not train them, so that one step needs python3:
+
+```bash
+python3 -m pip install zstandard
+node server/scripts/trainDictionary.mjs            # --db/--out/--rows/--size to override
+```
+
+Rows already written keep decoding only with the dictionary they were written with,
+so replace the file only before a database has been migrated.
+
+### Migrating an existing database
+
+```bash
+npm run build:backend
+node server/dist/scripts/migrateRawData.js --db server/data/ecoflow.db            # backfill
+node server/dist/scripts/migrateRawData.js --db server/data/ecoflow.db --verify   # check
+```
+
+The backfill only touches rows where `raw_data_z IS NULL AND raw_data IS NOT NULL`,
+so an interrupted run is resumed by re-running the same command. It commits every
+5000 rows and prints `id`, `rows_migrated`, `eta_seconds` and `file_size_gib` as it
+goes. `--verify` asserts `COUNT(raw_data) = COUNT(raw_data_z)` and decodes 100
+randomly probed rows back to an equal object.
+
+`--final` drops the legacy `raw_data` column and VACUUMs — without the VACUUM the
+file does not actually shrink. It refuses to run unless `--verify` passed in the same
+invocation. **VACUUM needs free disk roughly equal to the new database size while it
+runs**, and it rewrites the whole file, so leave it until the migration has been
+running in production long enough to trust. Use `--no-vacuum` to drop the column
+without reclaiming space yet.
+
+Every statement is a short primary-key-forward range. Long scans driven by
+`idx_device_states_device_timestamp`, and anything using `ORDER BY id DESC`, outlive
+the live writer's WAL snapshot on a table this size and fail with `database disk
+image is malformed`.
+
+### Rollout
+
+Steps 2–6 are host commands and are not run from a development checkout.
+
+```bash
+# 1. Back up. The WAL holds recent pages, so fold it in first, then copy.
+node scripts/checkpointDb.mjs server/data/ecoflow.db
+cp server/data/ecoflow.db server/data/ecoflow.db.backup-$(date +%F)
+
+# 2. Stop the writer.
+docker stop ecoflow-dashboard
+
+# 3. Backfill (~15-30 min for 4M rows; prints progress).
+node server/dist/scripts/migrateRawData.js --db server/data/ecoflow.db
+
+# 4. Verify.
+node server/dist/scripts/migrateRawData.js --db server/data/ecoflow.db --verify
+
+# 5. Restart and smoke-check the dashboard.
+docker start ecoflow-dashboard
+
+# 6. Later, once production has run on the compressed column for a while:
+node server/dist/scripts/migrateRawData.js --db server/data/ecoflow.db --verify --final
+```
+
+To roll back before step 6, stop the container and restore the backup; `raw_data` is
+still populated, so an older build reads it directly.
+
+### Tests
+
+```bash
+npm run test:codec    # roundtrip on a real 242-key row, corrupt-blob rejection
+npm run test:smoke    # /history + /errors return identical JSON before/after/-final
+```
+
+`npm run test:smoke` builds its own throwaway copy of the live database with
+`scripts/makeTestDb.mjs` (`--rows 5000` for a bigger one) and never writes to
+`server/data/ecoflow.db`.
+
 ## Device support
 
 Unknown EcoFlow products are intentionally read-only. Add a documented profile in `server/src/services/deviceProfiles.ts` with quota fixtures and command payload tests before exposing controls for that product.

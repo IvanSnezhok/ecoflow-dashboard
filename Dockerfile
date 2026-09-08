@@ -23,6 +23,12 @@ COPY server/package.json ./server/package.json
 COPY server/dist ./server/dist
 COPY dist ./dist
 
+# Словник zstd для device_states.raw_data_z. Без нього сервер не стартує.
+# server/data монтується томом і перекриває копію з образу, тому дублюємо
+# словник у /app/server/dict — звідти сервер візьме його, якщо том порожній.
+COPY server/data/zstd.dict ./server/data/zstd.dict
+COPY server/data/zstd.dict ./server/dict/zstd.dict
+
 # БД лежить у server/data — монтується томом
 RUN mkdir -p /app/server/data && chown -R node:node /app
 
