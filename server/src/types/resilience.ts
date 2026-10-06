@@ -9,6 +9,7 @@ export interface ResilienceSettings {
   deviceId?: number
   enabled: boolean
   autoAc: boolean
+  notifySlack: boolean
   regionId?: number
   dsoId?: number
   outageGroup?: string
@@ -46,7 +47,7 @@ export interface ResilienceStatus {
   scheduleUpdatedAt?: string
   checkedAt?: string
   error?: string
-  acAction?: 'on' | 'off' | 'blocked-low-soc' | 'none'
+  acAction?: 'on' | 'off' | 'blocked-low-soc' | 'failed' | 'none'
   forecast?: RuntimeForecast
   events: OutageEvent[]
 }

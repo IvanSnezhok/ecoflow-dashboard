@@ -1,5 +1,7 @@
 import { ecoflowApi } from './ecoflowApi.js'
 import { getResilienceSettings, insertLog, type ResilienceSettingsRow } from '../db/database.js'
+import { sendSlackRichMessage } from './slackService.js'
+import { decideAcAction, detectAlerts, initialAlertState, type AcAction, type AlertState } from './resilienceDecisions.js'
 import type {
   LoadPeriod,
   OutageEvent,
@@ -32,6 +34,7 @@ function rowToSettings(row?: ResilienceSettingsRow): ResilienceSettings {
     deviceId: row?.device_id ?? undefined,
     enabled: row?.enabled === 1,
     autoAc: row?.auto_ac === 1,
+    notifySlack: (row?.notify_slack ?? 1) === 1,
     regionId: row?.region_id ?? undefined,
     dsoId: row?.dso_id ?? undefined,
     outageGroup: row?.outage_group ?? undefined,
@@ -185,6 +188,7 @@ let lastScheduleKey = ''
 let automationOwnsAc = false
 let lastAcCommandAt = 0
 let lastRiskAt = 0
+let alertState: AlertState = initialAlertState
 
 function assess(events: OutageEvent[], status: string | undefined, now: Date, leadMinutes: number): Pick<ResilienceStatus, 'risk' | 'currentEvent' | 'nextEvent'> {
   const sorted = events.filter(event => new Date(event.end) > now).sort((a, b) => +new Date(a.start) - +new Date(b.start))
@@ -198,6 +202,10 @@ function assess(events: OutageEvent[], status: string | undefined, now: Date, le
     if (next.type === 'possible') return { risk: 'watch', nextEvent: next }
   }
   return { risk: 'none', nextEvent: next }
+}
+
+function isScheduleStale(): boolean {
+  return !cachedStatus.checkedAt || Date.now() - +new Date(cachedStatus.checkedAt) > MAX_STALE_MS
 }
 
 async function refreshSchedule(settings: ResilienceSettings, force = false): Promise<void> {
@@ -220,8 +228,7 @@ async function refreshSchedule(settings: ResilienceSettings, force = false): Pro
     lastScheduleFetch = Date.now()
     lastScheduleKey = scheduleKey
   } catch (error) {
-    const stale = !cachedStatus.checkedAt || Date.now() - +new Date(cachedStatus.checkedAt) > MAX_STALE_MS
-    cachedStatus = { ...cachedStatus, risk: stale ? 'stale' : cachedStatus.risk, error: error instanceof Error ? error.message : String(error) }
+    cachedStatus = { ...cachedStatus, risk: isScheduleStale() ? 'stale' : cachedStatus.risk, error: error instanceof Error ? error.message : String(error) }
   }
 }
 
@@ -259,6 +266,8 @@ export async function processResilienceAutomation(
   if (!settings.enabled || settings.deviceId !== metrics.deviceId) return
   await refreshSchedule(settings)
   cachedStatus = { ...cachedStatus, ...assess(cachedStatus.events, cachedStatus.scheduleStatus, new Date(), settings.warningLeadMinutes) }
+  // assess() never yields 'stale', so re-apply it here or AC automation would keep acting on old data.
+  if (isScheduleStale()) cachedStatus.risk = 'stale'
 
   const extraSocs = ['bmsSlave1', 'bmsSlave2'].flatMap(prefix =>
     rawData[`${prefix}.soc`] !== undefined && (rawData[`${prefix}.fullCap`] || rawData[`${prefix}.vol`])
@@ -270,25 +279,50 @@ export async function processResilienceAutomation(
     inverterEfficiency: settings.inverterEfficiency, loadProfile: settings.loadProfile,
     fallbackWatts: Math.max(50, metrics.totalOutputWatts),
   })
-  cachedStatus.acAction = 'none'
-  if (!settings.autoAc || cachedStatus.risk === 'stale') return
+  cachedStatus.acAction = await runAcAutomation(settings, metrics, rawData)
+  if (settings.notifySlack) await sendAlerts(metrics.soc, settings.minSoc)
+}
 
-  const riskRequiresAc = ['imminent', 'active', 'emergency'].includes(cachedStatus.risk)
-  if (riskRequiresAc) lastRiskAt = Date.now()
-  const inRecoveryDelay = automationOwnsAc && Date.now() - lastRiskAt < settings.recoveryDelayMinutes * 60_000
-  const shouldBeOn = riskRequiresAc || inRecoveryDelay
-  const acEnabled = Number(rawData['inv.cfgAcEnabled'] ?? rawData['inv.acOutState']) === 1
-  if (Date.now() - lastAcCommandAt < 60_000) return
-  if (shouldBeOn && metrics.soc < settings.minSoc) {
-    cachedStatus.acAction = 'blocked-low-soc'; return
+async function runAcAutomation(
+  settings: ResilienceSettings,
+  metrics: { deviceId: number; serialNumber: string; soc: number },
+  rawData: Record<string, unknown>,
+): Promise<AcAction> {
+  const decision = decideAcAction({
+    autoAc: settings.autoAc, risk: cachedStatus.risk, soc: metrics.soc, minSoc: settings.minSoc,
+    acEnabled: Number(rawData['inv.cfgAcEnabled'] ?? rawData['inv.acOutState']) === 1,
+    automationOwnsAc, recoveryDelayMinutes: settings.recoveryDelayMinutes,
+    lastRiskAt, lastAcCommandAt, nowMs: Date.now(),
+  })
+  lastRiskAt = decision.lastRiskAt
+  if (decision.action !== 'on' && decision.action !== 'off') return decision.action
+
+  const enable = decision.action === 'on'
+  const command = enable ? 'resilienceAcOn' : 'resilienceAcOff'
+  lastAcCommandAt = Date.now()
+  try {
+    await ecoflowApi.setAcOutput(metrics.serialNumber, enable)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    insertLog(metrics.deviceId, 'COMMAND', command, JSON.stringify({ risk: cachedStatus.risk }), null, false, message)
+    return 'failed'
   }
-  if (shouldBeOn && !acEnabled) {
-    await ecoflowApi.setAcOutput(metrics.serialNumber, true)
-    automationOwnsAc = true; lastAcCommandAt = Date.now(); cachedStatus.acAction = 'on'
-    insertLog(metrics.deviceId, 'COMMAND', 'resilienceAcOn', JSON.stringify({ risk: cachedStatus.risk }), null, true, null)
-  } else if (!shouldBeOn && acEnabled && automationOwnsAc) {
-    await ecoflowApi.setAcOutput(metrics.serialNumber, false)
-    automationOwnsAc = false; lastAcCommandAt = Date.now(); cachedStatus.acAction = 'off'
-    insertLog(metrics.deviceId, 'COMMAND', 'resilienceAcOff', JSON.stringify({ risk: cachedStatus.risk }), null, true, null)
+  automationOwnsAc = enable
+  insertLog(metrics.deviceId, 'COMMAND', command, JSON.stringify({ risk: cachedStatus.risk }), null, true, null)
+  return decision.action
+}
+
+async function sendAlerts(soc: number, minSoc: number): Promise<void> {
+  const { alerts, state } = detectAlerts(alertState, {
+    risk: cachedStatus.risk, currentEvent: cachedStatus.currentEvent, nextEvent: cachedStatus.nextEvent,
+    forecast: cachedStatus.forecast, acAction: cachedStatus.acAction ?? 'none', soc, minSoc,
+  })
+  alertState = state
+  for (const alert of alerts) {
+    try {
+      await sendSlackRichMessage({ title: alert.title, message: alert.message, color: alert.color })
+    } catch (error) {
+      console.error(`[Resilience] Failed to send ${alert.kind} alert:`, error)
+    }
   }
 }

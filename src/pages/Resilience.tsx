@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import type { LoadPeriod, ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
 
 const defaults: ResilienceSettings = {
-  enabled: false, autoAc: false, warningLeadMinutes: 60, recoveryDelayMinutes: 15,
+  enabled: false, autoAc: false, notifySlack: true, warningLeadMinutes: 60, recoveryDelayMinutes: 15,
   minSoc: 25, reserveSoc: 15, batteryCapacityWh: 3600, inverterEfficiency: 0.85,
   loadProfile: [
     { start: '00:00', end: '07:00', watts: 180, label: 'Ніч' },
@@ -199,6 +199,7 @@ export default function Resilience() {
           <Field label="Резерв SOC, %"><input className={inputClass} type="number" value={settings.reserveSoc} onChange={e => patch('reserveSoc', Number(e.target.value))} /></Field>
         </div>
         <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.autoAc} onChange={e => patch('autoAc', e.target.checked)} /><span><span className="block text-xs font-medium">Дозволити автоматичне перемикання AC</span><span className="block mt-1 text-[10px] text-muted-foreground">AC вмикається перед плановим/імовірним вікном і при аварійному статусі. Вимикається лише якщо його ввімкнула ця автоматизація.</span></span></label>
+        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.notifySlack} onChange={e => patch('notifySlack', e.target.checked)} /><span><span className="block text-xs font-medium">Сповіщення у Slack</span><span className="block mt-1 text-[10px] text-muted-foreground">Попередження перед вікном, початок і кінець відключення, перемикання AC, низький заряд і застарілий графік. Потрібен увімкнений Slack у налаштуваннях автоматизацій.</span></span></label>
       </section>
 
       <section className="rounded-sm border bg-card p-4 space-y-4"><div className="flex items-center gap-2"><Gauge className="w-4 h-4 text-energy-blue" /><h2 className="text-xs font-semibold uppercase tracking-wider">Прогноз автономності</h2></div>

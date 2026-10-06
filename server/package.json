@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test:profiles": "npm run build && node dist/services/deviceProfiles.test.js",
-    "test:resilience": "npm run build && node dist/services/resilienceService.test.js",
+    "test:resilience": "npm run build && node dist/services/resilienceDecisions.test.js && node dist/services/resilienceService.test.js",
     "test:codec": "npm run build && node dist/lib/rawDataCodec.test.js"
   },
   "dependencies": {

@@ -118,6 +118,7 @@ export function initDatabase(): void {
       device_id INTEGER,
       enabled INTEGER DEFAULT 0,
       auto_ac INTEGER DEFAULT 0,
+      notify_slack INTEGER DEFAULT 1,
       region_id INTEGER,
       dso_id INTEGER,
       outage_group TEXT,
@@ -205,6 +206,14 @@ function migrateDatabase(): void {
   }
 
   legacyRawDataPresent = existingColumns.has('raw_data')
+
+  const resilienceColumns = new Set(
+    (db.prepare("PRAGMA table_info(resilience_settings)").all() as Array<{ name: string }>).map(col => col.name)
+  )
+  if (!resilienceColumns.has('notify_slack')) {
+    db.exec('ALTER TABLE resilience_settings ADD COLUMN notify_slack INTEGER DEFAULT 1')
+    console.log('Migration: Added column notify_slack to resilience_settings')
+  }
 }
 
 // Device operations
@@ -885,6 +894,7 @@ export interface ResilienceSettingsRow {
   device_id: number | null
   enabled: number
   auto_ac: number
+  notify_slack: number
   region_id: number | null
   dso_id: number | null
   outage_group: string | null
@@ -905,12 +915,13 @@ export function getResilienceSettings(): ResilienceSettingsRow | undefined {
 export function upsertResilienceSettings(values: Omit<ResilienceSettingsRow, 'id' | 'updated_at'>): void {
   db.prepare(`
     INSERT INTO resilience_settings (
-      id, device_id, enabled, auto_ac, region_id, dso_id, outage_group,
+      id, device_id, enabled, auto_ac, notify_slack, region_id, dso_id, outage_group,
       warning_lead_minutes, recovery_delay_minutes, min_soc, reserve_soc,
       battery_capacity_wh, inverter_efficiency, load_profile, updated_at
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       device_id=excluded.device_id, enabled=excluded.enabled, auto_ac=excluded.auto_ac,
+      notify_slack=excluded.notify_slack,
       region_id=excluded.region_id, dso_id=excluded.dso_id, outage_group=excluded.outage_group,
       warning_lead_minutes=excluded.warning_lead_minutes,
       recovery_delay_minutes=excluded.recovery_delay_minutes,
@@ -919,7 +930,7 @@ export function upsertResilienceSettings(values: Omit<ResilienceSettingsRow, 'id
       inverter_efficiency=excluded.inverter_efficiency,
       load_profile=excluded.load_profile, updated_at=CURRENT_TIMESTAMP
   `).run(
-    values.device_id, values.enabled, values.auto_ac, values.region_id, values.dso_id,
+    values.device_id, values.enabled, values.auto_ac, values.notify_slack, values.region_id, values.dso_id,
     values.outage_group, values.warning_lead_minutes, values.recovery_delay_minutes,
     values.min_soc, values.reserve_soc, values.battery_capacity_wh,
     values.inverter_efficiency, values.load_profile

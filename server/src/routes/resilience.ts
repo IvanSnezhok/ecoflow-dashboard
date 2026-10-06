@@ -25,6 +25,7 @@ const settingsSchema = z.object({
   deviceId: z.number().int().positive().optional(),
   enabled: z.boolean(),
   autoAc: z.boolean(),
+  notifySlack: z.boolean().default(true),
   regionId: z.number().int().positive().optional(),
   dsoId: z.number().int().positive().optional(),
   outageGroup: z.string().trim().max(20).optional(),
@@ -60,7 +61,7 @@ resilienceRouter.put('/settings', (req, res) => {
     return
   }
   upsertResilienceSettings({
-    device_id: value.deviceId ?? null, enabled: value.enabled ? 1 : 0, auto_ac: value.autoAc ? 1 : 0,
+    device_id: value.deviceId ?? null, enabled: value.enabled ? 1 : 0, auto_ac: value.autoAc ? 1 : 0, notify_slack: value.notifySlack ? 1 : 0,
     region_id: value.regionId ?? null, dso_id: value.dsoId ?? null, outage_group: value.outageGroup ?? null,
     warning_lead_minutes: value.warningLeadMinutes, recovery_delay_minutes: value.recoveryDelayMinutes,
     min_soc: value.minSoc, reserve_soc: value.reserveSoc, battery_capacity_wh: value.batteryCapacityWh,

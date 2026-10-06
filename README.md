@@ -249,3 +249,10 @@ warning window (or during an active/emergency state), refuses to do so below the
 minimum SOC, and pauses commands when schedule data is stale. It turns AC off after
 the recovery delay only when this automation was the component that turned it on.
 YASNO schedules remain advisory and can change without notice.
+
+When Slack is enabled under automation settings, the outage automation also posts
+alerts (on by default, switchable on the Power reserve page): a warning when a window
+enters the lead time, the start and scheduled end of an outage, emergency shutdowns,
+every AC switch it makes or fails to make, a low-SOC block, a forecast that the
+reserve will run out before the window ends, and stale YASNO data. A restart does not
+re-announce a transition that already happened.
