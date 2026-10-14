@@ -34,6 +34,7 @@ log = logging.getLogger("ble-bridge")
 ADVERT_TTL_S = 120  # an advertisement older than this is not trusted for connecting
 STALE_PACKET_S = 60  # reconnect when an authenticated session goes silent this long
 MAX_BACKOFF_S = 60
+MODES = ("prefer", "fallback")
 
 
 def now_ms() -> int:
@@ -129,6 +130,10 @@ class Bridge:
         self.tasks: dict[str, asyncio.Task] = {}
         self.user_id: str | None = None
         self.user_id_source: str | None = None  # panel | env | login
+        # Switched from the panel; kept in /data so they survive restarts
+        self.enabled = True
+        self.mode: str | None = None  # prefer | fallback; None = dashboard's .env default
+        self._load_settings()
         self.login_error: str | None = None
         self.scanner_error: str | None = None
         self.scanning = False
@@ -138,6 +143,33 @@ class Bridge:
     @property
     def _user_id_file(self) -> Path:
         return self.config.data_dir / "user_id"
+
+    @property
+    def _settings_file(self) -> Path:
+        return self.config.data_dir / "settings.json"
+
+    def _load_settings(self) -> None:
+        try:
+            data = json.loads(self._settings_file.read_text())
+        except (OSError, ValueError):
+            return
+        if isinstance(data.get("enabled"), bool):
+            self.enabled = data["enabled"]
+        if data.get("mode") in MODES:
+            self.mode = data["mode"]
+
+    def update_settings(self, enabled: bool | None = None, mode: str | None = None) -> None:
+        if enabled is not None:
+            self.enabled = enabled
+        if mode is not None:
+            self.mode = mode
+        self.config.data_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self._settings_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"enabled": self.enabled, "mode": self.mode}))
+        tmp.replace(self._settings_file)
+        log.info("Bluetooth %s, mode %s", "enabled" if self.enabled else "disabled", self.mode or "default")
+        for session in self.sessions.values():
+            session.wake.set()
 
     def _read_cached_user_id(self) -> str | None:
         try:
@@ -295,6 +327,11 @@ class Bridge:
                 continue
             session.paused_until = None
 
+            if not self.enabled:
+                session.state = "disabled"
+                await self._wait(session, 60)
+                continue
+
             if not self.user_id:
                 session.state = "waiting_for_user_id"
                 await self._wait(session, 30)
@@ -338,6 +375,10 @@ class Bridge:
                 while True:
                     await asyncio.sleep(2)
                     if session.paused_until and session.paused_until > now_ms():
+                        clean = True
+                        break
+                    if not self.enabled:
+                        log.info("Bluetooth turned off; closing session to %s", session.sn)
                         clean = True
                         break
                     if self.user_id != session_user_id:
@@ -426,6 +467,8 @@ def build_app(bridge: Bridge) -> web.Application:
             "userIdSource": bridge.user_id_source,
             "userIdHint": mask_user_id(bridge.user_id),
             "loginError": bridge.login_error,
+            "enabled": bridge.enabled,
+            "mode": bridge.mode,
             "now": now_ms(),
             "devices": [s.to_json() for s in bridge.sessions.values()],
         })
@@ -442,6 +485,19 @@ def build_app(bridge: Bridge) -> web.Application:
 
     def account_json() -> dict[str, Any]:
         return {"ok": True, "userIdSource": bridge.user_id_source, "userIdHint": mask_user_id(bridge.user_id)}
+
+    @routes.post("/settings")
+    async def settings(request: web.Request) -> web.Response:
+        body = await json_body(request)
+        enabled, mode = body.get("enabled"), body.get("mode")
+        if enabled is not None and not isinstance(enabled, bool):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "enabled must be true or false"}),
+                                     content_type="application/json")
+        if mode is not None and mode not in MODES:
+            raise web.HTTPBadRequest(text=json.dumps({"error": f"mode must be one of {', '.join(MODES)}"}),
+                                     content_type="application/json")
+        bridge.update_settings(enabled=enabled, mode=mode)
+        return web.json_response({"ok": True, "enabled": bridge.enabled, "mode": bridge.mode})
 
     @routes.post("/account/login")
     async def account_login(request: web.Request) -> web.Response:

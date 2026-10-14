@@ -24,6 +24,27 @@ router.get("/status", async (_req: Request, res: Response) => {
   res.json({ ...bleBridge.overview(), devices: bleBridge.devices() });
 });
 
+// Panel switch: turn the Bluetooth channel on or off, and choose which channel leads
+router.post("/settings", async (req: Request, res: Response) => {
+  if (!requireBridge(res)) return;
+  const { enabled, mode } = req.body ?? {};
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    res.status(400).json({ error: "enabled must be true or false" });
+    return;
+  }
+  if (mode !== undefined && mode !== "prefer" && mode !== "fallback") {
+    res.status(400).json({ error: "mode must be prefer or fallback" });
+    return;
+  }
+  try {
+    await bleBridge.updateSettings({ enabled, mode });
+    insertLog(null, "COMMAND", "bleSettings", JSON.stringify({ enabled, mode }), JSON.stringify({ success: true }), true, null);
+    await respondWithStatus(res);
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Request failed" });
+  }
+});
+
 router.post("/login", async (req: Request, res: Response) => {
   if (!requireBridge(res)) return;
   const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";

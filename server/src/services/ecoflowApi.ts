@@ -133,12 +133,12 @@ class EcoflowApiClient {
   async getDeviceList(): Promise<DeviceListItem[]> {
     let cloud: DeviceListItem[];
     try {
-      if (bleBridge.enabled && this.cloudDown) throw new Error("cloud unreachable, retrying shortly");
+      if (bleBridge.active && this.cloudDown) throw new Error("cloud unreachable, retrying shortly");
       cloud = await this.getCloudDeviceList();
       this.lastCloudList = cloud;
       this.listFallbackReason = null;
     } catch (error) {
-      if (!bleBridge.enabled) throw error;
+      if (!bleBridge.active) throw error;
       const known = this.lastCloudList ?? (getAllDevices() as Array<{ serial_number: string; device_type: string; name: string | null }>)
         .map((d) => ({ sn: d.serial_number, productName: d.device_type, deviceName: d.name ?? d.serial_number, online: 0 }));
       if (known.length === 0) throw error;
@@ -296,7 +296,7 @@ class EcoflowApiClient {
     const viaBle = () => bleBridge.sendCommand(sn, action);
 
     const channels: Array<[string, () => Promise<unknown>]> = [];
-    const bleUsable = bleBridge.enabled && bleBridge.canCommand(sn);
+    const bleUsable = bleBridge.active && bleBridge.canCommand(sn);
     if (bleUsable && bleBridge.mode === "prefer") channels.push(["BLE", viaBle]);
     channels.push(["cloud", viaCloud]);
     if (bleUsable && bleBridge.mode !== "prefer") channels.push(["BLE", viaBle]);

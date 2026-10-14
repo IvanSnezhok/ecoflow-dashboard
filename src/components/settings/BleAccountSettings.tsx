@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bluetooth, CheckCircle, Loader2, LogIn, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/services/api'
+import { TechnicalToggle } from '@/components/ui/TechnicalToggle'
 import type { BleOverview } from '@/types/device'
 
 // Hosts eflib can log in to; "auto" picks api.ecoflow.com for e-mail logins
@@ -41,10 +42,10 @@ export function BleAccountSettings() {
   const [password, setPassword] = useState('')
   const [region, setRegion] = useState('auto')
   const [userId, setUserId] = useState('')
-  const [busy, setBusy] = useState<'login' | 'id' | 'forget' | null>(null)
+  const [busy, setBusy] = useState<'login' | 'id' | 'forget' | 'settings' | null>(null)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const run = async (kind: 'login' | 'id' | 'forget', call: () => Promise<{ data: BleOverview }>, success: string) => {
+  const run = async (kind: 'login' | 'id' | 'forget' | 'settings', call: () => Promise<{ data: BleOverview }>, success: string) => {
     setBusy(kind)
     setMessage(null)
     try {
@@ -78,7 +79,7 @@ export function BleAccountSettings() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Bluetooth className="w-5 h-5" />
-        <h3 className="font-semibold">Bluetooth · EcoFlow account</h3>
+        <h3 className="font-semibold">Bluetooth (BLE)</h3>
       </div>
 
       {isLoading ? (
@@ -90,7 +91,46 @@ export function BleAccountSettings() {
         </p>
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 text-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b">
+            <TechnicalToggle
+              checked={status.switchedOn}
+              onChange={(on) =>
+                run('settings', () => api.bleUpdateSettings({ enabled: on }), on ? 'Bluetooth turned on' : 'Bluetooth turned off')
+              }
+              disabled={busy !== null || !status.reachable}
+              label="Use Bluetooth"
+              description={
+                status.switchedOn
+                  ? 'The panel keeps a direct connection to the station'
+                  : 'Off: cloud only, and the EcoFlow app can use Bluetooth'
+              }
+              size="md"
+            />
+            <div className={cn('min-w-[16rem]', !status.switchedOn && 'opacity-50')}>
+              <span className="block text-sm font-medium mb-1">Primary channel</span>
+              <div className="flex gap-2">
+                {([
+                  ['prefer', 'Bluetooth first'],
+                  ['fallback', 'Cloud first'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={busy !== null || !status.reachable || !status.switchedOn}
+                    onClick={() => run('settings', () => api.bleUpdateSettings({ mode: value }), `${label}; the other channel is the backup`)}
+                    className={cn(
+                      'flex-1 px-3 py-2 rounded-lg border text-sm font-medium transition-colors disabled:cursor-not-allowed',
+                      status.mode === value ? 'bg-primary text-primary-foreground border-primary' : 'bg-card hover:bg-accent',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className={cn('grid gap-3 sm:grid-cols-2 text-sm', !status.switchedOn && 'opacity-60')}>
             <div>
               <span className="text-muted-foreground">Bridge</span>
               <p className={cn('font-medium', status.reachable ? 'text-energy-green' : 'text-energy-red')}>

@@ -280,11 +280,59 @@ class AccountTest(unittest.IsolatedAsyncioTestCase):
         await self.bridge.resolve_user_id()
         self.assertEqual((self.bridge.user_id, self.bridge.user_id_source), ("111", "panel"))
 
+    async def test_settings_are_validated_and_persisted(self):
+        resp = await self.client.post("/settings", json={"enabled": "no"})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/settings", json={"mode": "sometimes"})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/settings", json={"enabled": False, "mode": "fallback"})
+        self.assertEqual(await resp.json(), {"ok": True, "enabled": False, "mode": "fallback"})
+
+        status = await (await self.client.get("/status")).json()
+        self.assertEqual((status["enabled"], status["mode"]), (False, "fallback"))
+        # A restarted bridge comes back with the same choice
+        restarted = Bridge(self.bridge.config)
+        self.assertEqual((restarted.enabled, restarted.mode), (False, "fallback"))
+
+        await self.client.post("/settings", json={"enabled": True})
+        self.assertEqual((self.bridge.enabled, self.bridge.mode), (True, "fallback"))
+
+    async def test_turning_off_closes_the_session(self):
+        import bridge as bridge_module
+
+        self.bridge.set_user_id("111", "env")
+        session = Session(sn="DCEBZ5ZE1234567", advertised_at=bridge_module.now_ms())
+        self.bridge.sessions[session.sn] = session  # as on_advertisement registers it
+        self.bridge.adverts[session.sn] = (object(), object())
+        original_new, original_unsupported = bridge_module.eflib.NewDevice, bridge_module.eflib.is_unsupported
+        bridge_module.eflib.NewDevice = lambda *_: FlowDevice()
+        bridge_module.eflib.is_unsupported = lambda _: False
+        try:
+            task = asyncio.create_task(self.bridge.supervise(session))
+            await asyncio.sleep(0.1)
+            self.assertIsNotNone(session.authenticated_since)
+
+            self.bridge.update_settings(enabled=False)
+            await asyncio.sleep(2.3)
+            self.assertIsNone(session.authenticated_since)
+            self.assertTrue(FlowDevice.instances[-1].disconnected)
+            self.assertEqual(session.state, "disabled")
+
+            connections = len(FlowDevice.instances)
+            self.bridge.update_settings(enabled=True)
+            await asyncio.sleep(0.1)
+            self.assertEqual(len(FlowDevice.instances), connections + 1)
+            self.assertIsNotNone(session.authenticated_since)
+            task.cancel()
+        finally:
+            bridge_module.eflib.NewDevice, bridge_module.eflib.is_unsupported = original_new, original_unsupported
+
     async def test_account_change_reconnects_session(self):
         import bridge as bridge_module
 
         self.bridge.set_user_id("111", "env")
         session = Session(sn="DCEBZ5ZE1234567", advertised_at=bridge_module.now_ms())
+        self.bridge.sessions[session.sn] = session  # as on_advertisement registers it
         self.bridge.adverts[session.sn] = (object(), object())
         original_new, original_unsupported = bridge_module.eflib.NewDevice, bridge_module.eflib.is_unsupported
         bridge_module.eflib.NewDevice = lambda *_: FlowDevice()

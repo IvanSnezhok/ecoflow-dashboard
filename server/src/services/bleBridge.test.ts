@@ -18,6 +18,7 @@ let bridgeCommandFails = false;
 let cloudUp = false;
 const calls: string[] = [];
 let lastLoginBody: Record<string, string> = {};
+const bridgeSettings: { enabled: boolean; mode: "prefer" | "fallback" | null } = { enabled: true, mode: null };
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -30,13 +31,17 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     if (url.pathname === "/status") {
       const now = Date.now();
       return json({
-        scanning: true, scannerError: null, userIdConfigured: true, now,
+        scanning: true, scannerError: null, userIdConfigured: true, now, ...bridgeSettings,
         devices: [{
           sn: SN, name: "EF-DC4567", address: "AA:BB", rssi: -61, advertisedAt: now, state: "authenticated",
           supported: true, authenticated: bridgeAuthenticated, authenticatedSince: now - 60_000, lastPacketAt: now,
           error: null, pausedUntil: null, sessionsStarted: 1, quota: bleQuota, quotaUpdatedAt: now - 1_000,
         }],
       });
+    }
+    if (url.pathname === "/settings") {
+      Object.assign(bridgeSettings, JSON.parse(String(init?.body)));
+      return json({ ok: true, ...bridgeSettings });
     }
     if (url.pathname === "/account/login") {
       lastLoginBody = JSON.parse(String(init?.body));
@@ -94,6 +99,28 @@ assert.deepEqual(calls.filter((c) => !c.endsWith("/status")), [
 // Both channels down: one error naming both
 cloudUp = false;
 await assert.rejects(ecoflowApi.setAcOutput(SN, true), /BLE: .*device rejected.*cloud: /);
+
+// The panel switch turns BLE off for data and commands
+bridgeCommandFails = false;
+cloudUp = true;
+await bleBridge.updateSettings({ enabled: false });
+await bleBridge.refresh();
+assert.equal(bleBridge.active, false);
+assert.equal(bleBridge.freshQuota(SN), null);
+calls.length = 0;
+await ecoflowApi.setAcOutput(SN, false);
+assert.deepEqual(calls.filter((c) => !c.endsWith("/status")), ["PUT api-e.ecoflow.com/iot-open/sign/device/quota"]);
+
+// ...and the mode chosen in the panel overrides ECOFLOW_BLE_MODE
+await bleBridge.updateSettings({ enabled: true, mode: "fallback" });
+await bleBridge.refresh();
+assert.equal(bleBridge.mode, "fallback");
+calls.length = 0;
+await ecoflowApi.setAcOutput(SN, true);
+assert.deepEqual(calls.filter((c) => !c.endsWith("/status")), ["PUT api-e.ecoflow.com/iot-open/sign/device/quota"]);
+bridgeSettings.mode = null;
+await bleBridge.refresh();
+assert.equal(bleBridge.mode, "prefer");
 
 // Without an authenticated session BLE is not used at all
 bridgeAuthenticated = false;

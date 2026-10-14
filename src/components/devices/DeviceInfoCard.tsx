@@ -113,6 +113,7 @@ const BLE_STATES: Record<string, string> = {
   reconnecting: 'Reconnecting…',
   paused: 'Paused',
   waiting_for_user_id: 'Needs EcoFlow user ID',
+  disabled: 'Turned off',
   unsupported: 'Model not supported',
 }
 
@@ -145,7 +146,8 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
   }
 
   let status: ReactNode
-  if (!ble.reachable) status = <span className="text-energy-red">Bridge offline</span>
+  if (!ble.switchedOn) status = <Link to="/settings" className="text-muted-foreground underline">Off · turn on in Settings</Link>
+  else if (!ble.reachable) status = <span className="text-energy-red">Bridge offline</span>
   else if (ble.scannerError) status = <span className="text-energy-red">Adapter error</span>
   else if (!device) status = <span className="text-muted-foreground">Not in range</span>
   else if (device.live) status = <span className="text-energy-green">Connected</span>
@@ -156,7 +158,7 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
   else status = <span className="text-energy-yellow">{BLE_STATES[device.state] ?? device.state.replace(/_/g, ' ')}</span>
 
   const quality = device?.rssi != null ? bleQuality(device.rssi) : null
-  const problem = !ble.reachable ? ble.error : ble.scannerError ?? (device && !device.live ? device.error : null)
+  const problem = !ble.switchedOn ? null : !ble.reachable ? ble.error : ble.scannerError ?? (device && !device.live ? device.error : null)
 
   return (
     <section>
@@ -185,7 +187,7 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
         )}
         {problem && <Row label="Error" value={<span className="text-energy-red">{problem}</span>} mono={false} />}
       </div>
-      {device && ble.reachable && (
+      {device && ble.reachable && ble.switchedOn && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {device.state === 'paused' ? (
             <button

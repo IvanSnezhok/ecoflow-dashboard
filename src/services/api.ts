@@ -123,6 +123,9 @@ export const api = {
   bleLogin: (email: string, password: string, region: string) =>
     client.post<BleOverview>("/ble/login", { email, password, region }),
 
+  bleUpdateSettings: (settings: { enabled?: boolean; mode?: "prefer" | "fallback" }) =>
+    client.post<BleOverview>("/ble/settings", settings),
+
   bleSetUserId: (userId: string) => client.post<BleOverview>("/ble/user-id", { userId }),
 
   bleForgetUserId: () => client.delete<BleOverview>("/ble/account"),
