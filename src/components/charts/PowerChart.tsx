@@ -15,10 +15,10 @@ import { formatWatts, type PowerKey } from './chartStats'
 import { useSettingsStore } from '@/stores/settingsStore'
 
 /**
- * `input`  – what charges the station (grid + solar), stacked.
- * `output` – what the house consumes from it (AC + DC), stacked.
+ * `input`  – what charges the station (grid, solar).
+ * `output` – what the house consumes from it (AC, DC).
  * Charging and consumption used to share one chart with four similar lines; split
- * charts with stacked areas show both the total and its parts at a glance.
+ * charts with one line per source read at a glance; the tooltip adds the total.
  */
 export type PowerChartMode = 'input' | 'output'
 
@@ -135,8 +135,8 @@ export const PowerChart = memo(function PowerChart({
         <defs>
           {series.map((s) => (
             <linearGradient key={s.key} id={`power-${mode}-${s.key}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={s.color} stopOpacity={0.45} />
-              <stop offset="95%" stopColor={s.color} stopOpacity={0.08} />
+              <stop offset="5%" stopColor={s.color} stopOpacity={0.3} />
+              <stop offset="95%" stopColor={s.color} stopOpacity={0.04} />
             </linearGradient>
           ))}
         </defs>
@@ -183,9 +183,10 @@ export const PowerChart = memo(function PowerChart({
             key={s.key}
             type="monotone"
             dataKey={s.key}
-            stackId={mode}
+            // Not stacked: with stacking the upper series' line sits on top of the
+            // total, so 0 W of solar drew a yellow line over the AC-charging curve
             stroke={s.color}
-            strokeWidth={1.5}
+            strokeWidth={2}
             fill={`url(#power-${mode}-${s.key})`}
             dot={false}
             connectNulls={false}
