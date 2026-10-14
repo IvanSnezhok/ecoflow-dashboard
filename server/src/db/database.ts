@@ -129,8 +129,30 @@ export function initDatabase(): void {
       battery_capacity_wh INTEGER DEFAULT 3600,
       inverter_efficiency REAL DEFAULT 0.85,
       load_profile TEXT DEFAULT '[]',
+      ac_off_max_watts INTEGER DEFAULT 50,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
+    -- Grid presence per minute as seen by the device (light / no light timeline)
+    CREATE TABLE IF NOT EXISTS grid_minutes (
+      device_id INTEGER NOT NULL,
+      minute INTEGER NOT NULL, -- unix epoch minute, UTC
+      grid_on INTEGER NOT NULL,
+      load_wh REAL NOT NULL DEFAULT 0,
+      ecoflow_seconds REAL NOT NULL DEFAULT 0,
+      PRIMARY KEY (device_id, minute)
+    ) WITHOUT ROWID;
+
+    -- Last known outage schedule per Kyiv day, kept after YASNO stops serving it
+    CREATE TABLE IF NOT EXISTS outage_schedule_days (
+      day TEXT NOT NULL, -- YYYY-MM-DD, Kyiv
+      source TEXT NOT NULL, -- planned | probable
+      outage_group TEXT NOT NULL,
+      status TEXT,
+      slots TEXT NOT NULL DEFAULT '[]', -- [{ start, end }] in Kyiv minutes of the day
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (day, source, outage_group)
     );
 
     -- Create indexes
@@ -213,6 +235,10 @@ function migrateDatabase(): void {
   if (!resilienceColumns.has('notify_slack')) {
     db.exec('ALTER TABLE resilience_settings ADD COLUMN notify_slack INTEGER DEFAULT 1')
     console.log('Migration: Added column notify_slack to resilience_settings')
+  }
+  if (!resilienceColumns.has('ac_off_max_watts')) {
+    db.exec('ALTER TABLE resilience_settings ADD COLUMN ac_off_max_watts INTEGER DEFAULT 50')
+    console.log('Migration: Added column ac_off_max_watts to resilience_settings')
   }
 }
 
@@ -680,6 +706,8 @@ export function cleanupOldData(retentionDays: number = 30): void {
 
   db.prepare('DELETE FROM device_states WHERE timestamp < ?').run(cutoff)
   db.prepare('DELETE FROM operation_logs WHERE timestamp < ?').run(cutoff)
+  db.prepare('DELETE FROM grid_minutes WHERE minute < ?').run(Math.floor(cutoffDate.getTime() / 60_000))
+  db.prepare('DELETE FROM outage_schedule_days WHERE day < ?').run(cutoff.slice(0, 10))
 
   console.log(`Cleaned up data older than ${retentionDays} days`)
 }
@@ -905,6 +933,7 @@ export interface ResilienceSettingsRow {
   battery_capacity_wh: number
   inverter_efficiency: number
   load_profile: string
+  ac_off_max_watts: number
   updated_at: string
 }
 
@@ -917,8 +946,8 @@ export function upsertResilienceSettings(values: Omit<ResilienceSettingsRow, 'id
     INSERT INTO resilience_settings (
       id, device_id, enabled, auto_ac, notify_slack, region_id, dso_id, outage_group,
       warning_lead_minutes, recovery_delay_minutes, min_soc, reserve_soc,
-      battery_capacity_wh, inverter_efficiency, load_profile, updated_at
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      battery_capacity_wh, inverter_efficiency, load_profile, ac_off_max_watts, updated_at
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       device_id=excluded.device_id, enabled=excluded.enabled, auto_ac=excluded.auto_ac,
       notify_slack=excluded.notify_slack,
@@ -928,13 +957,110 @@ export function upsertResilienceSettings(values: Omit<ResilienceSettingsRow, 'id
       min_soc=excluded.min_soc, reserve_soc=excluded.reserve_soc,
       battery_capacity_wh=excluded.battery_capacity_wh,
       inverter_efficiency=excluded.inverter_efficiency,
-      load_profile=excluded.load_profile, updated_at=CURRENT_TIMESTAMP
+      load_profile=excluded.load_profile, ac_off_max_watts=excluded.ac_off_max_watts,
+      updated_at=CURRENT_TIMESTAMP
   `).run(
     values.device_id, values.enabled, values.auto_ac, values.notify_slack, values.region_id, values.dso_id,
     values.outage_group, values.warning_lead_minutes, values.recovery_delay_minutes,
     values.min_soc, values.reserve_soc, values.battery_capacity_wh,
-    values.inverter_efficiency, values.load_profile
+    values.inverter_efficiency, values.load_profile, values.ac_off_max_watts
   )
+}
+
+// ==================== Grid timeline & load history ====================
+
+export interface GridMinuteRow {
+  minute: number
+  grid_on: number
+  load_wh: number
+  ecoflow_seconds: number
+}
+
+export function upsertGridMinute(deviceId: number, row: GridMinuteRow): void {
+  db.prepare(`
+    INSERT INTO grid_minutes (device_id, minute, grid_on, load_wh, ecoflow_seconds)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(device_id, minute) DO UPDATE SET
+      grid_on=excluded.grid_on, load_wh=excluded.load_wh, ecoflow_seconds=excluded.ecoflow_seconds
+  `).run(deviceId, row.minute, row.grid_on, row.load_wh, row.ecoflow_seconds)
+}
+
+export function getGridMinutes(deviceId: number, fromMinute: number, toMinute: number): GridMinuteRow[] {
+  return db.prepare(`
+    SELECT minute, grid_on, load_wh, ecoflow_seconds FROM grid_minutes
+    WHERE device_id = ? AND minute >= ? AND minute < ?
+    ORDER BY minute
+  `).all(deviceId, fromMinute, toMinute) as GridMinuteRow[]
+}
+
+export function getLastGridMinute(deviceId: number): GridMinuteRow | undefined {
+  return db.prepare(`
+    SELECT minute, grid_on, load_wh, ecoflow_seconds FROM grid_minutes
+    WHERE device_id = ? ORDER BY minute DESC LIMIT 1
+  `).get(deviceId) as GridMinuteRow | undefined
+}
+
+/**
+ * Where the grid state that ends at `lastMinute` began, and what was drawn since,
+ * so an outage in progress survives a restart. Looks back at most `maxMinutes`.
+ */
+export function getGridEpisodeStart(deviceId: number, gridOn: number, lastMinute: number, maxMinutes: number): {
+  startMinute: number; loadWh: number; ecoflowSeconds: number
+} {
+  const floor = lastMinute - maxMinutes
+  const changed = db.prepare(`
+    SELECT MAX(minute) AS minute FROM grid_minutes
+    WHERE device_id = ? AND grid_on != ? AND minute >= ? AND minute <= ?
+  `).get(deviceId, gridOn, floor, lastMinute) as { minute: number | null }
+  const first = db.prepare(`
+    SELECT MIN(minute) AS minute FROM grid_minutes WHERE device_id = ? AND minute >= ?
+  `).get(deviceId, floor) as { minute: number | null }
+  const startMinute = changed.minute !== null ? changed.minute + 1 : first.minute ?? lastMinute
+  const totals = db.prepare(`
+    SELECT COALESCE(SUM(load_wh), 0) AS loadWh, COALESCE(SUM(ecoflow_seconds), 0) AS ecoflowSeconds
+    FROM grid_minutes WHERE device_id = ? AND minute >= ? AND minute <= ?
+  `).get(deviceId, startMinute, lastMinute) as { loadWh: number; ecoflowSeconds: number }
+  return { startMinute, ...totals }
+}
+
+export interface OutageScheduleDayRow {
+  day: string
+  source: string
+  status: string | null
+  slots: string
+}
+
+export function upsertOutageScheduleDay(row: OutageScheduleDayRow & { outage_group: string }): void {
+  db.prepare(`
+    INSERT INTO outage_schedule_days (day, source, outage_group, status, slots, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(day, source, outage_group) DO UPDATE SET
+      status=excluded.status, slots=excluded.slots, updated_at=CURRENT_TIMESTAMP
+  `).run(row.day, row.source, row.outage_group, row.status, row.slots)
+}
+
+export function getOutageScheduleDays(outageGroup: string, fromDay: string, toDay: string): OutageScheduleDayRow[] {
+  return db.prepare(`
+    SELECT day, source, status, slots FROM outage_schedule_days
+    WHERE outage_group = ? AND day >= ? AND day <= ?
+  `).all(outageGroup, fromDay, toDay) as OutageScheduleDayRow[]
+}
+
+/**
+ * Consumer load in 15-minute UTC buckets (each fits inside one 30-minute Kyiv
+ * slot). Only samples with AC output count: while AC is off the outputs read 0 W,
+ * which says nothing about what the household would draw during an outage.
+ */
+export function getLoadBuckets(deviceId: number, fromIso: string): Array<{ bucketStartMs: number; wattsSum: number; samples: number }> {
+  return db.prepare(`
+    SELECT
+      (CAST(strftime('%s', timestamp) AS INTEGER) / 900) * 900000 AS bucketStartMs,
+      SUM(COALESCE(ac_output_watts, 0) + COALESCE(dc_output_watts, 0)) AS wattsSum,
+      COUNT(*) AS samples
+    FROM device_states
+    WHERE device_id = ? AND timestamp >= ? AND ac_output_watts > 0
+    GROUP BY CAST(strftime('%s', timestamp) AS INTEGER) / 900
+  `).all(deviceId, toSqliteTimestamp(fromIso)) as Array<{ bucketStartMs: number; wattsSum: number; samples: number }>
 }
 
 // ==================== Slack Settings ====================

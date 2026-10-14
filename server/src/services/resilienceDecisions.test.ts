@@ -1,25 +1,34 @@
 import assert from 'node:assert/strict'
-import { decideAcAction, detectAlerts, initialAlertState, type AcDecisionInput, type AlertInput, type AlertState } from './resilienceDecisions.js'
+import {
+  decideAcAction, detectAlerts, initialAlertState, LOW_LOAD_CONFIRM_MS,
+  type AcDecisionInput, type AlertInput, type AlertState,
+} from './resilienceDecisions.js'
 import type { OutageEvent } from '../types/resilience.js'
 
 const NOW = Date.parse('2026-10-06T12:00:00Z')
 const MIN = 60_000
 
+// Defaults: grid present, no load on the AC sockets for a while already.
 const base: AcDecisionInput = {
-  autoAc: true, risk: 'none', soc: 80, minSoc: 25, acEnabled: false, automationOwnsAc: false,
-  recoveryDelayMinutes: 15, lastRiskAt: 0, lastAcCommandAt: 0, nowMs: NOW,
+  autoAc: true, risk: 'none', gridOff: false, soc: 80, minSoc: 25, acEnabled: false,
+  acOutputWatts: 0, acOffMaxWatts: 50, automationOwnsAc: false,
+  recoveryDelayMinutes: 15, lastRiskAt: 0, lowLoadSince: NOW - 10 * 60_000, lastAcCommandAt: 0, nowMs: NOW,
 }
 const decide = (patch: Partial<AcDecisionInput>) => decideAcAction({ ...base, ...patch })
+const brief = (patch: Partial<AcDecisionInput>) => {
+  const { action, lastRiskAt } = decide(patch)
+  return { action, lastRiskAt }
+}
 
 // ---- AC decisions
 
 // Disabled or stale: never act, and do not move the recovery clock.
-assert.deepEqual(decide({ autoAc: false, risk: 'active' }), { action: 'none', lastRiskAt: 0 })
-assert.deepEqual(decide({ risk: 'stale', acEnabled: true, automationOwnsAc: true }), { action: 'none', lastRiskAt: 0 })
+assert.deepEqual(brief({ autoAc: false, risk: 'active' }), { action: 'none', lastRiskAt: 0 })
+assert.deepEqual(brief({ risk: 'stale', acEnabled: true, automationOwnsAc: true }), { action: 'none', lastRiskAt: 0 })
 
 // Every risk that needs AC turns it on and stamps lastRiskAt.
 for (const risk of ['imminent', 'active', 'emergency'] as const) {
-  assert.deepEqual(decide({ risk }), { action: 'on', lastRiskAt: NOW }, risk)
+  assert.deepEqual(brief({ risk }), { action: 'on', lastRiskAt: NOW }, risk)
 }
 // 'watch' alone is not enough.
 assert.equal(decide({ risk: 'watch' }).action, 'none')
@@ -45,12 +54,39 @@ assert.equal(decide({ ...owned, lastRiskAt: NOW - 1 * MIN, recoveryDelayMinutes:
 // AC that someone else turned on is never turned off.
 assert.equal(decide({ ...owned, automationOwnsAc: false, lastRiskAt: NOW - 60 * MIN }).action, 'none')
 
+// Load on the sockets: AC stays on until it drops below the threshold and stays there.
+const recovered = { ...owned, lastRiskAt: NOW - 60 * MIN }
+assert.deepEqual(decide({ ...recovered, acOutputWatts: 120, lowLoadSince: null }),
+  { action: 'waiting-load', lastRiskAt: NOW - 60 * MIN, lowLoadSince: null })
+assert.equal(decide({ ...recovered, acOutputWatts: 50, lowLoadSince: null }).action, 'waiting-load')
+// Load just dropped: the clock starts, AC still waits for the confirmation period.
+assert.deepEqual(decide({ ...recovered, acOutputWatts: 30, lowLoadSince: null }),
+  { action: 'waiting-load', lastRiskAt: NOW - 60 * MIN, lowLoadSince: NOW })
+assert.equal(decide({ ...recovered, acOutputWatts: 30, lowLoadSince: NOW - LOW_LOAD_CONFIRM_MS + 1000 }).action, 'waiting-load')
+assert.equal(decide({ ...recovered, acOutputWatts: 30, lowLoadSince: NOW - LOW_LOAD_CONFIRM_MS }).action, 'off')
+// A load spike resets the low-load clock.
+assert.equal(decide({ ...recovered, acOutputWatts: 400, lowLoadSince: NOW - 30 * MIN }).lowLoadSince, null)
+// Threshold is configurable.
+assert.equal(decide({ ...recovered, acOutputWatts: 80, acOffMaxWatts: 100 }).action, 'off')
+
+// The device losing grid turns AC on even when the schedule shows no risk...
+assert.deepEqual(brief({ gridOff: true }), { action: 'on', lastRiskAt: NOW })
+// ...and even when the schedule is stale.
+assert.equal(decide({ gridOff: true, risk: 'stale' }).action, 'on')
+// It keeps AC on and restarts the recovery clock while the grid is still off.
+assert.equal(decide({ ...owned, gridOff: true, lastRiskAt: NOW - 60 * MIN }).action, 'none')
+// Low SOC still wins.
+assert.equal(decide({ gridOff: true, soc: 10 }).action, 'blocked-low-soc')
+
 // ---- Alerts
 
 const event = (startIso: string, endIso: string, type: OutageEvent['type'] = 'definite'): OutageEvent =>
   ({ start: startIso, end: endIso, type, source: type === 'definite' ? 'planned' : 'probable' })
 const outage = event('2026-10-06T13:00:00Z', '2026-10-06T17:00:00Z')
-const longForecast = { batteryCount: 1, nominalWh: 3600, usableWh: 2000, averageLoadWatts: 300, hoursRemaining: 18, depletionAt: '2026-10-07T06:00:00Z' }
+const longForecast = {
+  batteryCount: 1, nominalWh: 3600, usableWh: 2000, averageLoadWatts: 300, hoursRemaining: 18,
+  depletionAt: '2026-10-07T06:00:00Z', loadSource: 'history' as const, historyDays: 14,
+}
 const shortForecast = { ...longForecast, hoursRemaining: 2, depletionAt: '2026-10-06T15:00:00Z' }
 
 const alertBase: AlertInput = { risk: 'none', acAction: 'none', soc: 80, minSoc: 25, forecast: longForecast }
@@ -126,5 +162,33 @@ assert.deepEqual(run([{ risk: 'none' }, { risk: 'imminent', nextEvent: outage, a
 // Message text carries Kyiv local times.
 const warning = detectAlerts({ ...initialAlertState, risk: 'none' }, { ...alertBase, risk: 'imminent', nextEvent: outage })
 assert.match(warning.alerts[0].message, /16:00–20:00/)
+
+// Grid loss and return reported by the device.
+assert.deepEqual(run([
+  { grid: { state: 'on', unplanned: false } },
+  { grid: { state: 'off', unplanned: true } },
+  { grid: { state: 'off', unplanned: true } },
+  { grid: { state: 'unknown', unplanned: false } },
+  { grid: { state: 'on', unplanned: false }, finishedOutage: { minutes: 125, ecoflowMinutes: 120, wh: 830 } },
+]), [[], ['grid-lost'], [], [], ['grid-restored']])
+const unplanned = detectAlerts({ ...initialAlertState, risk: 'none', grid: 'on' }, { ...alertBase, grid: { state: 'off', unplanned: true } })
+assert.equal(unplanned.alerts[0].title, 'Позапланове відключення світла')
+const scheduled = detectAlerts({ ...initialAlertState, risk: 'active', grid: 'on' }, { ...alertBase, risk: 'active', currentEvent: outage, grid: { state: 'off', unplanned: false } })
+assert.equal(scheduled.alerts[0].title, 'Світло зникло')
+const restored = detectAlerts({ ...initialAlertState, risk: 'none', grid: 'off' },
+  { ...alertBase, grid: { state: 'on', unplanned: false }, finishedOutage: { minutes: 125, ecoflowMinutes: 120, wh: 830 } })
+assert.match(restored.alerts[0].message, /2 год 5 хв/)
+assert.match(restored.alerts[0].message, /0\.83 кВт·год/)
+// A restart during an outage records the grid state silently.
+assert.deepEqual(run([{ grid: { state: 'off', unplanned: true } }]), [[]])
+
+// Deferred switch-off is announced once, and only for real load.
+assert.deepEqual(run([
+  { risk: 'none' },
+  { acAction: 'waiting-load', acOutputWatts: 20, acOffMaxWatts: 50 },
+  { acAction: 'waiting-load', acOutputWatts: 300, acOffMaxWatts: 50 },
+  { acAction: 'waiting-load', acOutputWatts: 280, acOffMaxWatts: 50 },
+  { acAction: 'off' },
+]), [[], [], ['ac-off-deferred'], [], ['ac-off']])
 
 console.log('Resilience decision fixtures passed')
