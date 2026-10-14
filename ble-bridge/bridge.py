@@ -25,7 +25,7 @@ from bleak.backends.scanner import AdvertisementData
 
 import eflib
 from eflib.connection import Connection
-from eflib.login import EcoFlowLogin
+from eflib.login import EcoFlowLogin, Region
 
 from quota import packet_to_quota
 
@@ -38,6 +38,13 @@ MAX_BACKOFF_S = 60
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def mask_user_id(user_id: str | None) -> str | None:
+    """Enough to recognise the account in the panel without exposing the ID."""
+    if not user_id:
+        return None
+    return "…" + user_id[-4:] if len(user_id) > 4 else "…"
 
 
 @dataclass
@@ -120,7 +127,9 @@ class Bridge:
         self.sessions: dict[str, Session] = {}
         self.adverts: dict[str, tuple[BLEDevice, AdvertisementData]] = {}
         self.tasks: dict[str, asyncio.Task] = {}
-        self.user_id: str | None = config.user_id
+        self.user_id: str | None = None
+        self.user_id_source: str | None = None  # panel | env | login
+        self.login_error: str | None = None
         self.scanner_error: str | None = None
         self.scanning = False
 
@@ -130,42 +139,77 @@ class Bridge:
     def _user_id_file(self) -> Path:
         return self.config.data_dir / "user_id"
 
-    async def resolve_user_id(self) -> None:
-        """The BLE login needs the numeric user ID of the account the device is bound to."""
-        if self.user_id:
-            return
+    def _read_cached_user_id(self) -> str | None:
         try:
-            cached = self._user_id_file.read_text().strip()
-            if cached:
-                self.user_id = cached
-                log.info("Using cached EcoFlow user ID")
-                return
+            return self._user_id_file.read_text().strip() or None
         except OSError:
+            return None
+
+    def set_user_id(self, user_id: str | None, source: str | None) -> None:
+        """Switch accounts; open sessions reconnect with the new ID."""
+        self.user_id = user_id
+        self.user_id_source = source if user_id else None
+        self.login_error = None
+        for session in self.sessions.values():
+            session.wake.set()
+
+    def save_user_id(self, user_id: str, source: str = "panel") -> None:
+        self.config.data_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self._user_id_file.with_suffix(".tmp")
+        tmp.write_text(user_id)
+        tmp.replace(self._user_id_file)
+        self.set_user_id(user_id, source)
+
+    def forget_user_id(self) -> None:
+        """Drop the ID saved from the panel and fall back to .env."""
+        try:
+            self._user_id_file.unlink()
+        except FileNotFoundError:
             pass
+        self.set_user_id(self.config.user_id, "env")
+
+    async def login(self, email: str, password: str, region: str) -> str:
+        """Exchange the EcoFlow account login for its user ID. The password is not kept."""
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
+            result = await EcoFlowLogin(http).login(email, password, region)
+        if not result.user_id:
+            raise PermissionError(result.error or "login failed")
+        return str(result.user_id)
+
+    async def resolve_user_id(self) -> None:
+        """The BLE login needs the numeric user ID of the account the device is bound to.
+
+        Order: an ID saved from the panel, then ECOFLOW_BLE_USER_ID, then a login with
+        ECOFLOW_BLE_EMAIL / ECOFLOW_BLE_PASSWORD.
+        """
+        if cached := self._read_cached_user_id():
+            self.set_user_id(cached, "panel")
+            log.info("Using saved EcoFlow user ID")
+            return
+        if self.config.user_id:
+            self.set_user_id(self.config.user_id, "env")
+            return
         if not (self.config.email and self.config.password):
-            log.error("Set ECOFLOW_BLE_USER_ID or ECOFLOW_BLE_EMAIL + ECOFLOW_BLE_PASSWORD")
+            log.warning("No EcoFlow user ID yet: sign in on the dashboard's Settings page")
             return
 
         # Retried until it works: the internet may be down when the bridge starts.
         delay = 10
         while not self.user_id:
             try:
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
-                    result = await EcoFlowLogin(http).login(
-                        self.config.email, self.config.password, self.config.region
-                    )
-                if result.user_id:
-                    self.user_id = str(result.user_id)
+                user_id = await self.login(self.config.email, self.config.password, self.config.region)
+                # A panel login may have landed meanwhile; it wins.
+                if not self.user_id:
                     try:
-                        self.config.data_dir.mkdir(parents=True, exist_ok=True)
-                        self._user_id_file.write_text(self.user_id)
+                        self.save_user_id(user_id, "login")
                     except OSError as exc:
                         log.warning("Could not cache user ID: %s", exc)
+                        self.set_user_id(user_id, "login")
                     log.info("Resolved EcoFlow user ID from account login")
-                    for session in self.sessions.values():
-                        session.wake.set()
-                    return
-                log.error("EcoFlow login failed: %s", result.error)
+                return
+            except PermissionError as exc:
+                self.login_error = str(exc)
+                log.error("EcoFlow login failed: %s", exc)
             except Exception as exc:  # network errors while offline
                 log.warning("EcoFlow login unavailable (%s), retrying in %ss", exc, delay)
             await asyncio.sleep(delay)
@@ -280,7 +324,8 @@ class Bridge:
                 device.with_disabled_reconnect().with_connection_options(
                     Connection.Options(timeout=self.config.connect_timeout)
                 )
-                await device.connect(user_id=self.user_id)
+                session_user_id = self.user_id
+                await device.connect(user_id=session_user_id)
                 async with asyncio.timeout(self.config.connect_timeout + 10):
                     await device.wait_until_authenticated_or_error(raise_on_error=True)
 
@@ -293,6 +338,10 @@ class Bridge:
                 while True:
                     await asyncio.sleep(2)
                     if session.paused_until and session.paused_until > now_ms():
+                        clean = True
+                        break
+                    if self.user_id != session_user_id:
+                        log.info("EcoFlow account changed; reconnecting %s", session.sn)
                         clean = True
                         break
                     state = device.connection_state
@@ -374,9 +423,64 @@ def build_app(bridge: Bridge) -> web.Application:
             "scanning": bridge.scanning,
             "scannerError": bridge.scanner_error,
             "userIdConfigured": bool(bridge.user_id),
+            "userIdSource": bridge.user_id_source,
+            "userIdHint": mask_user_id(bridge.user_id),
+            "loginError": bridge.login_error,
             "now": now_ms(),
             "devices": [s.to_json() for s in bridge.sessions.values()],
         })
+
+    async def json_body(request: web.Request) -> dict[str, Any]:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            body = None
+        if not isinstance(body, dict):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "body must be a JSON object"}),
+                                     content_type="application/json")
+        return body
+
+    def account_json() -> dict[str, Any]:
+        return {"ok": True, "userIdSource": bridge.user_id_source, "userIdHint": mask_user_id(bridge.user_id)}
+
+    @routes.post("/account/login")
+    async def account_login(request: web.Request) -> web.Response:
+        body = await json_body(request)
+        email = str(body.get("email") or "").strip()
+        password = str(body.get("password") or "")
+        region = str(body.get("region") or "auto")
+        if not email or not password:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "email and password are required"}),
+                                     content_type="application/json")
+        try:
+            Region(region)
+        except ValueError:
+            raise web.HTTPBadRequest(text=json.dumps({"error": f"unknown region {region!r}"}),
+                                     content_type="application/json")
+        try:
+            user_id = await bridge.login(email, password, region)
+        except PermissionError as exc:
+            raise web.HTTPUnauthorized(text=json.dumps({"error": str(exc)}), content_type="application/json")
+        except Exception as exc:
+            raise web.HTTPBadGateway(text=json.dumps({"error": f"EcoFlow login unavailable: {exc}"}),
+                                     content_type="application/json")
+        bridge.save_user_id(user_id)
+        log.info("EcoFlow user ID saved from the dashboard login")
+        return web.json_response(account_json())
+
+    @routes.post("/account/user-id")
+    async def account_user_id(request: web.Request) -> web.Response:
+        user_id = str((await json_body(request)).get("userId") or "").strip()
+        if not user_id.isdigit():
+            raise web.HTTPBadRequest(text=json.dumps({"error": "user ID must contain only digits"}),
+                                     content_type="application/json")
+        bridge.save_user_id(user_id)
+        return web.json_response(account_json())
+
+    @routes.delete("/account")
+    async def account_forget(_: web.Request) -> web.Response:
+        bridge.forget_user_id()
+        return web.json_response(account_json())
 
     @routes.post("/devices/{sn}/command")
     async def command(request: web.Request) -> web.Response:
