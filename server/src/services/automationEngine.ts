@@ -18,6 +18,7 @@ import {
   getAutomationRuleById,
 } from '../db/database.js'
 import { evaluateConditions } from './conditionEvaluator.js'
+import { isRealErrorCode } from '../lib/errorClassification.js'
 import { executeActions } from './actionExecutor.js'
 
 // Store previous metrics for detecting changes (e.g., online/offline transitions)
@@ -285,9 +286,11 @@ export function buildDeviceMetrics(
   const invErr = rawData['inv.errCode'] as number | undefined
   const mpptErr = rawData['mppt.faultCode'] as number | undefined
 
-  if (bmsErr && bmsErr !== 0) errorCodes.push(bmsErr)
-  if (invErr && invErr !== 0) errorCodes.push(invErr)
-  if (mpptErr && mpptErr !== 0) errorCodes.push(mpptErr)
+  // Status codes (e.g. BMS 6 = fully charged, 23 = charge limit reached) are
+  // normal operation and must not trigger "device has error" rules
+  if (bmsErr !== undefined && isRealErrorCode('bms', bmsErr)) errorCodes.push(bmsErr)
+  if (invErr !== undefined && isRealErrorCode('inv', invErr)) errorCodes.push(invErr)
+  if (mpptErr !== undefined && isRealErrorCode('mppt', mpptErr)) errorCodes.push(mpptErr)
 
   return {
     serialNumber,

@@ -27,6 +27,7 @@ function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload || !payload.length) return null
 
   const value = payload[0]?.value
+  if (value === null || value === undefined) return null
   const color = value <= 20 ? '#EF4444' : value <= 40 ? '#F59E0B' : '#10B981'
   const hour12 = timeFormat === '12h'
 
@@ -79,16 +80,12 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
+      <AreaChart data={data} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="socGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
             <stop offset="95%" stopColor="#10B981" stopOpacity={0.02} />
           </linearGradient>
-          {/* Pattern for grid */}
-          <pattern id="gridPattern" width="20" height="20" patternUnits="userSpaceOnUse">
-            <circle cx="1" cy="1" r="0.5" fill={chartColors.grid} opacity="0.5" />
-          </pattern>
         </defs>
 
         {/* Dotted grid */}
@@ -109,7 +106,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
           interval="preserveStartEnd"
-          minTickGap={50}
+          minTickGap={40}
         />
         <YAxis
           domain={[0, 100]}
@@ -137,7 +134,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
             strokeOpacity={0.5}
             label={{
               value: `avg ${avgSoc}%`,
-              position: 'right',
+              position: 'insideTopRight',
               fill: chartColors.text,
               fontSize: 9,
               fontFamily: 'JetBrains Mono, monospace',
@@ -159,7 +156,9 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
           stroke={chartColors.batterySoc.stroke}
           fill="url(#socGradient)"
           strokeWidth={2}
-          connectNulls={true}
+          // Short holes are already bridged in useChartData; what is left is a real gap
+          connectNulls={false}
+          isAnimationActive={false}
           dot={false}
           activeDot={{
             r: 4,

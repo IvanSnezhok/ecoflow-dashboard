@@ -110,7 +110,7 @@ export const ExtraBatteryChart = memo(function ExtraBatteryChart({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
+      <LineChart data={data} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
         {/* Dotted grid */}
         <CartesianGrid
           strokeDasharray="2 4"
@@ -129,7 +129,7 @@ export const ExtraBatteryChart = memo(function ExtraBatteryChart({
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
           interval="preserveStartEnd"
-          minTickGap={50}
+          minTickGap={40}
         />
         <YAxis
           domain={metric === 'soc' ? [0, 100] : ['auto', 'auto']}
@@ -157,7 +157,7 @@ export const ExtraBatteryChart = memo(function ExtraBatteryChart({
             strokeOpacity={0.5}
             label={{
               value: `avg ${avgValue}${unit}`,
-              position: 'right',
+              position: 'insideTopRight',
               fill: chartColors.text,
               fontSize: 9,
               fontFamily: 'JetBrains Mono, monospace',
@@ -189,7 +189,8 @@ export const ExtraBatteryChart = memo(function ExtraBatteryChart({
           stroke={color}
           strokeWidth={2}
           dot={false}
-          connectNulls={true}
+          connectNulls={false}
+          isAnimationActive={false}
           activeDot={{
             r: 4,
             fill: color,

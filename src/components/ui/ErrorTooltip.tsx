@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ExternalLink, Youtube, BookOpen, Info, ChevronRight } from "lucide-react";
-import { getErrorInfo, type ErrorType } from "@/utils/errorCodes";
+import { getErrorInfo, getConfidenceLabel, type ErrorType, type ErrorSeverity } from "@/utils/errorCodes";
 import { cn } from "@/lib/utils";
 
 interface ErrorTooltipProps {
@@ -9,6 +9,12 @@ interface ErrorTooltipProps {
   errorType: ErrorType;
   children: React.ReactNode;
 }
+
+const SEVERITY_STYLES: Record<ErrorSeverity, { badge: string; label: string }> = {
+  error: { badge: "bg-red-500/10 text-red-500", label: "Error" },
+  warning: { badge: "bg-amber-500/10 text-amber-500", label: "Warning" },
+  info: { badge: "bg-green-500/10 text-green-600 dark:text-green-400", label: "Status - not an error" },
+};
 
 interface TooltipPosition {
   top: number;
@@ -23,6 +29,8 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const info = getErrorInfo(errorType, errorCode);
+  const severityStyle = SEVERITY_STYLES[info.severity];
+  const isStatus = info.severity === "info";
 
   const calculatePosition = useCallback(() => {
     if (!triggerRef.current) return;
@@ -58,6 +66,18 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
     setPosition({ top: Math.max(padding, top), left, placement });
   }, []);
 
+  // Close on a tap/click outside the trigger and the tooltip
+  useEffect(() => {
+    if (!isOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || tooltipRef.current?.contains(target)) return;
+      setIsOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [isOpen]);
+
   useEffect(() => {
     if (isOpen) {
       calculatePosition();
@@ -81,7 +101,7 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
         zIndex: 9999,
       }}
       className={cn(
-        "w-80 max-w-[calc(100vw-16px)]",
+        "w-80 max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] overflow-y-auto",
         "bg-popover border border-border rounded-xl shadow-2xl",
         "p-4 animate-in fade-in-0 zoom-in-95 duration-200"
       )}
@@ -90,12 +110,15 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
     >
       {/* Header */}
       <div className="flex items-start gap-3 mb-3">
-        <div className="p-2 rounded-lg bg-red-500/10 shrink-0">
-          <span className="text-red-500 font-mono font-bold text-sm">
+        <div className={cn("p-2 rounded-lg shrink-0", severityStyle.badge)}>
+          <span className="font-mono font-bold text-sm">
             {typeof info.code === "string" ? info.code : `#${info.code}`}
           </span>
         </div>
         <div className="min-w-0">
+          <p className={cn("text-[10px] font-semibold uppercase tracking-wider", severityStyle.badge.split(" ").slice(1).join(" "))}>
+            {severityStyle.label}
+          </p>
           <h4 className="font-semibold text-foreground">{info.title}</h4>
           <p className="text-sm text-muted-foreground mt-0.5">{info.description}</p>
         </div>
@@ -104,7 +127,7 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
       {/* Causes */}
       <div className="mb-3">
         <h5 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
-          Possible Causes
+          {isStatus ? "Why it appears" : "Possible Causes"}
         </h5>
         <ul className="space-y-1">
           {info.causes.map((cause, i) => (
@@ -119,7 +142,7 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
       {/* Solutions */}
       <div className="mb-3">
         <h5 className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
-          Solutions
+          {isStatus ? "What to do" : "Solutions"}
         </h5>
         <ul className="space-y-1">
           {info.solutions.map((solution, i) => (
@@ -130,6 +153,10 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
           ))}
         </ul>
       </div>
+
+      <p className="text-[10px] text-muted-foreground mb-2">
+        Source: {getConfidenceLabel(info.confidence)}
+      </p>
 
       {/* Links */}
       {(info.youtubeUrl || info.docsUrl) && (
@@ -178,8 +205,20 @@ export function ErrorTooltip({ errorCode, errorType, children }: ErrorTooltipPro
       <div
         ref={triggerRef}
         className="inline-block"
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
         onMouseEnter={() => setIsOpen(true)}
         onMouseLeave={() => setIsOpen(false)}
+        // Phones have no hover: a tap opens it, a tap elsewhere closes it
+        onClick={() => setIsOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setIsOpen((open) => !open);
+          }
+          if (event.key === "Escape") setIsOpen(false);
+        }}
       >
         <div className="cursor-help flex items-center gap-1">
           {children}

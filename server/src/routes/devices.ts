@@ -2,6 +2,8 @@ import { Router, Request, Response } from "express";
 import { ecoflowApi } from "../services/ecoflowApi.js";
 import { mqttService } from "../services/mqttService.js";
 import { getDeviceProfile } from "../services/deviceProfiles.js";
+import { buildStateSample, isUsefulSample } from "../services/stateSample.js";
+import { isRealErrorCode } from "../lib/errorClassification.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -223,6 +225,10 @@ router.get("/", async (_req: Request, res: Response) => {
                 mpptFaultCode: (q["mppt.faultCode"] as number) ?? 0,
                 overloadState: (q["pd.iconOverloadState"] as number) ?? 0,
                 emsIsNormal: (q["ems.emsIsNormalFlag"] as number) === 1,
+                // Official DELTA Pro fields: permanent BMS fault and the
+                // hi-temp / low-temp / overload warning bitfield
+                bmsFault: (q["bmsMaster.bmsFault"] as number) ?? 0,
+                bmsWarningState: (q["ems.bmsWarningState"] as number) ?? 0,
               },
               // Extra batteries (bmsSlave1 and bmsSlave2)
               // Ecoflow API returns data for one battery at a time, so we cache and merge
@@ -267,25 +273,12 @@ router.get("/", async (_req: Request, res: Response) => {
               fastChargingEnabled: ((q["inv.cfgFastChgWatts"] as number) || 0) > 0,
             };
 
-            // Save state to database (including new chart data)
-            insertDeviceState(deviceId, {
-              batterySoc: state.batterySoc,
-              batteryWatts: state.batteryWatts,
-              acInputWatts: state.acInputWatts,
-              solarInputWatts: state.solarInputWatts,
-              acOutputWatts: state.acOutputWatts,
-              dcOutputWatts: state.dcOutputWatts,
-              temperature: state.temperature,
-              rawData: JSON.stringify(quota),
-              // New fields for detailed charts
-              bmsMasterVol: (q["bmsMaster.vol"] as number) || null,
-              extraBattery1Soc: state.extraBattery1?.soc ?? null,
-              extraBattery1Temp: state.extraBattery1?.temp ?? null,
-              extraBattery1Vol: state.extraBattery1?.vol ?? null,
-              extraBattery2Soc: state.extraBattery2?.soc ?? null,
-              extraBattery2Temp: state.extraBattery2?.temp ?? null,
-              extraBattery2Vol: state.extraBattery2?.vol ?? null,
-            });
+            // Save state to database. The shared builder stores null for anything the
+            // quota did not carry, so a partial payload never becomes a 0% dip.
+            const sample = buildStateSample(q);
+            if (isUsefulSample(sample)) {
+              insertDeviceState(deviceId, { ...sample, rawData: JSON.stringify(quota) });
+            }
 
             // Subscribe to MQTT updates
             mqttService.subscribeToDevice(apiDevice.sn);
@@ -300,14 +293,17 @@ router.get("/", async (_req: Request, res: Response) => {
           const errors = getLastKnownErrors(deviceId);
           if (errors) {
             // Check if there are any actual errors
+            // Status codes (fully charged, charge limit reached) and EMS sleep
+            // are normal and must not show up as "last known errors"
             const hasErrors =
-              errors.bmsMasterErrCode !== 0 ||
-              errors.invErrCode !== 0 ||
-              errors.mpptFaultCode !== 0 ||
+              isRealErrorCode("bms", errors.bmsMasterErrCode) ||
+              isRealErrorCode("inv", errors.invErrCode) ||
+              isRealErrorCode("mppt", errors.mpptFaultCode) ||
               errors.overloadState !== 0 ||
-              !errors.emsIsNormal ||
-              (errors.bmsSlave1ErrCode && errors.bmsSlave1ErrCode !== 0) ||
-              (errors.bmsSlave2ErrCode && errors.bmsSlave2ErrCode !== 0);
+              !!errors.bmsFault ||
+              ((errors.bmsWarningState ?? 0) & 0b111) !== 0 ||
+              isRealErrorCode("extraBattery1", errors.bmsSlave1ErrCode) ||
+              isRealErrorCode("extraBattery2", errors.bmsSlave2ErrCode);
 
             if (hasErrors) {
               lastKnownErrors = errors;

@@ -1,6 +1,8 @@
 import { cn } from '@/lib/utils'
-import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import type { ExtraBatteryState } from '@/types/device'
+import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
+import { getErrorInfo } from '@/utils/errorCodes'
 
 // Capacity for all EcoFlow batteries (Delta Pro and Smart Extra Battery) in Wh
 const BATTERY_CAPACITY_WH = 3600
@@ -9,6 +11,8 @@ interface BatteryPackProps {
   mainSoc: number
   mainIsCharging: boolean
   mainTemp?: number
+  /** bmsMaster.errCode; status values like 6 (full) show as a green badge */
+  mainErrCode?: number
   mainCapacityWh?: number // Optional main battery capacity, defaults to 3600Wh
   extraBatteryCapacityWh?: number // Optional extra battery capacity, defaults to 3600Wh
   extraBattery1?: ExtraBatteryState | null
@@ -26,6 +30,7 @@ interface BatteryUnitProps {
   remainingWh?: number
   fullCapacityWh?: number
   errCode?: number
+  errType?: 'bms' | 'battery'
   isMain?: boolean
 }
 
@@ -45,6 +50,7 @@ function BatteryUnit({
   remainingWh,
   fullCapacityWh,
   errCode,
+  errType = 'battery',
   isMain = false,
 }: BatteryUnitProps) {
   const getBatteryColor = () => {
@@ -59,14 +65,16 @@ function BatteryUnit({
     return 'text-energy-green'
   }
 
-  const hasError = errCode !== undefined && errCode !== 0
+  // errCode 6 = fully charged, 23 = charged to the user's limit: status, not an error
+  const errInfo = errCode ? getErrorInfo(errType, errCode) : null
+  const hasError = errInfo !== null && errInfo.severity !== 'info'
 
   return (
     <div
       className={cn(
         'p-3 rounded-sm border transition-all',
         isMain ? 'bg-card border-border' : 'bg-muted/30 border-border/50',
-        hasError && 'border-energy-red/50'
+        hasError && (errInfo?.severity === 'error' ? 'border-energy-red/50' : 'border-energy-yellow/50')
       )}
     >
       {/* Header */}
@@ -92,13 +100,25 @@ function BatteryUnit({
             )}
           </span>
         )}
-        {hasError && (
-          <div className="flex items-center gap-1 text-energy-red">
-            <AlertTriangle className="w-3 h-3" />
-            <span className="text-[10px] font-mono">ERR</span>
-          </div>
-        )}
       </div>
+      {errInfo && errCode !== undefined && (
+        <div className="-mt-1 mb-2">
+          <ErrorTooltip errorCode={errCode} errorType={errType}>
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+              errInfo.severity === 'info' && 'bg-green-500/10 text-green-700 dark:text-green-400',
+              errInfo.severity === 'warning' && 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+              errInfo.severity === 'error' && 'bg-red-500/10 text-red-600 dark:text-red-400'
+            )}>
+              {errInfo.severity === 'info'
+                ? <CheckCircle2 className="w-3 h-3" />
+                : <AlertTriangle className="w-3 h-3" />}
+              {errInfo.title}
+              {errInfo.severity !== 'info' && <span className="font-mono">#{errCode}</span>}
+            </span>
+          </ErrorTooltip>
+        </div>
+      )}
 
       {/* Battery Bar */}
       <div className="flex items-center gap-2 mb-2">
@@ -171,6 +191,7 @@ export function BatteryPack({
   mainSoc,
   mainIsCharging,
   mainTemp,
+  mainErrCode,
   mainCapacityWh = BATTERY_CAPACITY_WH,
   extraBatteryCapacityWh = BATTERY_CAPACITY_WH,
   extraBattery1,
@@ -191,6 +212,8 @@ export function BatteryPack({
       temp: mainTemp,
       remainingWh: mainRemainingWh,
       fullCapacityWh: mainCapacityWh,
+      errCode: mainErrCode,
+      errType: 'bms',
       isMain: true
     },
     extraBattery1 && {

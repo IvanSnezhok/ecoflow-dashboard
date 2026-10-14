@@ -5,9 +5,15 @@ interface ChartContainerProps {
   title: string
   icon?: React.ReactNode
   isLoading: boolean
+  /** Background refresh in progress (chart stays visible) */
+  isFetching?: boolean
   error: string | null
   onRefresh?: () => void
   isEmpty?: boolean
+  /** Key numbers shown under the title, e.g. now / peak / energy */
+  summary?: React.ReactNode
+  /** Short hint explaining how to read the chart */
+  hint?: string
   children: React.ReactNode
   className?: string
 }
@@ -16,44 +22,60 @@ export function ChartContainer({
   title,
   icon,
   isLoading,
+  isFetching,
   error,
   onRefresh,
   isEmpty,
+  summary,
+  hint,
   children,
   className,
 }: ChartContainerProps) {
+  const busy = isLoading || isFetching
+
   return (
     <div className={cn(
-      'rounded-sm border bg-card overflow-hidden',
+      'rounded-sm border bg-card overflow-hidden min-w-0',
       className
     )}>
       {/* Header */}
-      <div className="px-4 py-3 flex items-center justify-between border-b bg-muted/30">
-        <div className="flex items-center gap-2">
-          {icon || <BarChart3 className="w-4 h-4 text-primary" />}
-          <span className="text-xs font-semibold uppercase tracking-wider">{title}</span>
+      <div className="px-3 sm:px-4 py-2.5 border-b bg-muted/30">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {icon || <BarChart3 className="w-4 h-4 text-primary shrink-0" />}
+            <span className="text-xs font-semibold uppercase tracking-wider truncate">{title}</span>
+          </div>
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={isLoading}
+              className={cn(
+                'p-1.5 -m-1 rounded-sm transition-colors shrink-0',
+                'hover:bg-muted',
+                'disabled:opacity-50 disabled:cursor-not-allowed'
+              )}
+              title="Refresh"
+              aria-label="Refresh chart"
+            >
+              <RefreshCw className={cn(
+                'w-3.5 h-3.5 text-muted-foreground',
+                busy && 'animate-spin text-primary'
+              )} />
+            </button>
+          )}
         </div>
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            disabled={isLoading}
-            className={cn(
-              'p-1 rounded-sm transition-colors',
-              'hover:bg-muted',
-              'disabled:opacity-50 disabled:cursor-not-allowed'
-            )}
-            title="Refresh"
-          >
-            <RefreshCw className={cn(
-              'w-3.5 h-3.5 text-muted-foreground',
-              isLoading && 'animate-spin text-primary'
-            )} />
-          </button>
+        {summary && !isEmpty && !error && (
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[10px] font-mono text-muted-foreground">
+            {summary}
+          </div>
+        )}
+        {hint && (
+          <p className="mt-1 text-[10px] text-muted-foreground/80">{hint}</p>
         )}
       </div>
 
       {/* Content */}
-      <div className="p-4">
+      <div className="p-2 sm:p-4">
         {isLoading && !error && (
           <div className="h-[200px] flex flex-col items-center justify-center">
             <div className="relative">
@@ -93,12 +115,17 @@ export function ChartContainer({
           </div>
         )}
 
-        {!isLoading && !error && !isEmpty && (
-          <div className="animate-in fade-in-50 duration-300">
-            {children}
-          </div>
-        )}
+        {!isLoading && !error && !isEmpty && children}
       </div>
     </div>
+  )
+}
+
+/** One "label value" pair for a chart summary row */
+export function SummaryItem({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <span className="whitespace-nowrap">
+      {label} <span className={cn('font-semibold text-foreground', className)}>{value}</span>
+    </span>
   )
 }
