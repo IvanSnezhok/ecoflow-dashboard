@@ -19,6 +19,7 @@ import {
   insertLog,
   cleanupOldData,
   cleanupAutomationLogs,
+  recordConnectionState,
 } from "./db/database.js";
 import { mqttService } from "./services/mqttService.js";
 import { ecoflowApi } from "./services/ecoflowApi.js";
@@ -229,6 +230,11 @@ server.listen(PORT, async () => {
     try {
       const devices = await ecoflowApi.getDeviceList();
       for (const device of devices) {
+        // Track how long the Wi-Fi/cloud connection holds. Devices first appear in the
+        // database through the /devices route, so unknown ones are picked up later.
+        const known = getDeviceBySn(device.sn) as { id: number } | undefined;
+        if (known) recordConnectionState(known.id, device.online === 1);
+
         if (device.online === 1) {
           try {
             const quota = await ecoflowApi.getDeviceQuota(device.sn);

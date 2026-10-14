@@ -11,7 +11,8 @@
     "test:resilience": "npm run build && node dist/services/resilienceDecisions.test.js && node dist/services/resilienceService.test.js && node dist/services/powerTimeline.test.js",
     "test:codec": "npm run build && node dist/lib/rawDataCodec.test.js",
     "test:sample": "npm run build && node dist/services/stateSample.test.js",
-    "test:info": "npm run build && node dist/services/deviceInfo.test.js"
+    "test:info": "npm run build && node dist/services/deviceInfo.test.js",
+    "test:connection": "npm run build && node dist/services/connectionStats.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",

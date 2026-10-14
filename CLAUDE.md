@@ -88,3 +88,4 @@ ECOFLOW_MQTT_PORT=8883
 3. **Controls** use optimistic UI updates via `updateDeviceState` in Zustand store
 4. **Logs page** filters by type: API_CALL, COMMAND, MQTT
 5. **Device Info card** (`GET /api/devices/:sn/info`, `server/src/services/deviceInfo.ts`) shows serials, firmware (`*.sysVer` packed one byte per part) and Wi-Fi RSSI (`pd.wifiRssi`, 0 = not reported). The Open API quota has no MAC/SSID for DELTA Pro; they are matched by key name for models that do send them
+6. **Connection uptime** (Device Info card, `server/src/services/connectionStats.ts`): the background collector records online/offline changes of the cloud `online` flag in `device_connection_events`; `device_connection_watch` holds a heartbeat so dashboard downtime is marked as unobserved (durations become "≥")

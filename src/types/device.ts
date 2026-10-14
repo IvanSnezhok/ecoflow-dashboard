@@ -157,4 +157,17 @@ export interface DeviceTechnicalInfo {
     firmware: string | null;
   };
   recordedAt: string | null; // null = live data, otherwise last stored snapshot
+  connection: ConnectionSummary;
+}
+
+// How long the Wi-Fi/cloud connection holds, from the online flag the backend polls
+export interface ConnectionSummary {
+  online: boolean | null; // null = not tracked yet
+  since: string | null; // ISO start of the current online/offline streak
+  sinceExact: boolean; // false = started before tracking or while the dashboard was down
+  unobservedMs: number; // part of the streak the dashboard was not watching
+  lastOutage: { start: string; end: string | null; durationMs: number; exact: boolean } | null;
+  disconnects24h: number;
+  disconnects7d: number;
+  trackingSince: string | null;
 }

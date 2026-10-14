@@ -156,6 +156,25 @@ export function initDatabase(): void {
       PRIMARY KEY (day, source, outage_group)
     );
 
+    -- Wi-Fi/cloud connectivity: one row per observed online/offline change
+    CREATE TABLE IF NOT EXISTS device_connection_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id INTEGER NOT NULL,
+      online INTEGER NOT NULL,
+      timestamp_ms INTEGER NOT NULL,
+      unobserved_since_ms INTEGER, -- last check before a monitoring gap, NULL = watched live
+      first_observation INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
+    -- Last time the collector checked each device, to detect dashboard downtime
+    CREATE TABLE IF NOT EXISTS device_connection_watch (
+      device_id INTEGER PRIMARY KEY,
+      online INTEGER NOT NULL,
+      checked_at_ms INTEGER NOT NULL,
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
     -- Create indexes
     CREATE INDEX IF NOT EXISTS idx_device_states_device_timestamp
       ON device_states(device_id, timestamp);
@@ -175,6 +194,8 @@ export function initDatabase(): void {
       ON automation_logs(rule_id);
     CREATE INDEX IF NOT EXISTS idx_automation_logs_timestamp
       ON automation_logs(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_device_connection_events_device_ts
+      ON device_connection_events(device_id, timestamp_ms);
   `)
 
   // Run migrations for new columns
@@ -371,6 +392,93 @@ export function getLatestRawData(deviceId: number): { data: Record<string, unkno
   if (!state) return null;
   const data = parseRawData(state);
   return data ? { data, timestamp: state.timestamp } : null;
+}
+
+// ==================== Connectivity ====================
+
+// A check older than this means the collector was not running in between.
+const CONNECTION_GAP_MS = 3 * 60_000
+// Heartbeats are persisted at most this often; must stay well under the gap.
+const CONNECTION_HEARTBEAT_MS = 60_000
+const connectionWatch = new Map<number, { online: boolean; checkedAt: number; persistedAt: number }>()
+
+/** Called by the collector each time it reads a device's online flag. */
+export function recordConnectionState(deviceId: number, online: boolean, now: number = Date.now()): void {
+  let known = connectionWatch.get(deviceId)
+  if (!known) {
+    const row = db.prepare('SELECT online, checked_at_ms FROM device_connection_watch WHERE device_id = ?')
+      .get(deviceId) as { online: number; checked_at_ms: number } | undefined
+    if (row) known = { online: row.online === 1, checkedAt: row.checked_at_ms, persistedAt: row.checked_at_ms }
+  }
+
+  const gap = known !== undefined && now - known.checkedAt > CONNECTION_GAP_MS
+  // After a gap the device may have dropped and come back unseen, so a fresh event
+  // marks the unwatched window even when the state looks unchanged.
+  if (!known || known.online !== online || gap) {
+    db.prepare(`
+      INSERT INTO device_connection_events (device_id, online, timestamp_ms, unobserved_since_ms, first_observation)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(deviceId, online ? 1 : 0, now, gap ? known!.checkedAt : null, known ? 0 : 1)
+  }
+
+  const persist = !known || known.online !== online || gap || now - known.persistedAt >= CONNECTION_HEARTBEAT_MS
+  if (persist) {
+    db.prepare(`
+      INSERT INTO device_connection_watch (device_id, online, checked_at_ms) VALUES (?, ?, ?)
+      ON CONFLICT(device_id) DO UPDATE SET online = excluded.online, checked_at_ms = excluded.checked_at_ms
+    `).run(deviceId, online ? 1 : 0, now)
+  }
+  connectionWatch.set(deviceId, { online, checkedAt: now, persistedAt: persist ? now : known!.persistedAt })
+}
+
+interface ConnectionEventRow {
+  online: number
+  timestamp_ms: number
+  unobserved_since_ms: number | null
+  first_observation: number
+}
+
+/**
+ * Events covering the last `windowMs`, the current streak and the latest outage,
+ * plus the event before them, oldest first; and when tracking started.
+ */
+export function getConnectionEvents(deviceId: number, windowMs: number, now: number = Date.now()) {
+  // Start of the latest outage is the first offline event after the last online one before it.
+  const lastOffline = db.prepare(
+    'SELECT MAX(timestamp_ms) AS ts FROM device_connection_events WHERE device_id = ? AND online = 0'
+  ).get(deviceId) as { ts: number | null }
+  const onlineBeforeOutage = lastOffline.ts === null ? null : (db.prepare(
+    'SELECT MAX(timestamp_ms) AS ts FROM device_connection_events WHERE device_id = ? AND online = 1 AND timestamp_ms < ?'
+  ).get(deviceId, lastOffline.ts) as { ts: number | null }).ts
+
+  // No outage ever (or none with an online event before it): the streak spans all history.
+  const from = lastOffline.ts === null || onlineBeforeOutage === null
+    ? 0
+    : Math.min(now - windowMs, onlineBeforeOutage)
+
+  const rows = db.prepare(`
+    SELECT * FROM (
+      SELECT online, timestamp_ms, unobserved_since_ms, first_observation FROM device_connection_events
+      WHERE device_id = ? AND timestamp_ms < ? ORDER BY timestamp_ms DESC, id DESC LIMIT 1
+    )
+    UNION ALL
+    SELECT online, timestamp_ms, unobserved_since_ms, first_observation FROM device_connection_events
+    WHERE device_id = ? AND timestamp_ms >= ?
+  `).all(deviceId, from, deviceId, from) as ConnectionEventRow[]
+  rows.sort((a, b) => a.timestamp_ms - b.timestamp_ms)
+
+  const first = db.prepare('SELECT MIN(timestamp_ms) AS ts FROM device_connection_events WHERE device_id = ?')
+    .get(deviceId) as { ts: number | null }
+
+  return {
+    trackingSince: first.ts,
+    events: rows.map((r) => ({
+      online: r.online === 1,
+      timestamp: r.timestamp_ms,
+      unobservedSince: r.unobserved_since_ms,
+      firstObservation: r.first_observation === 1,
+    })),
+  }
 }
 
 // Get last known error codes for a device (for offline state)

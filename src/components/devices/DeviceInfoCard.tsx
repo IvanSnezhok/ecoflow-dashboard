@@ -4,6 +4,7 @@ import { Cpu, Wifi, WifiOff } from 'lucide-react'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { parseServerTimestamp } from '@/components/charts'
+import type { ConnectionSummary } from '@/types/device'
 
 interface DeviceInfoCardProps {
   serialNumber: string
@@ -41,14 +42,70 @@ function Row({ label, value, mono = true }: { label: string; value: ReactNode; m
   )
 }
 
+function formatDuration(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const mins = minutes % 60
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+
+const formatMoment = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+function ConnectionRows({ connection, now }: { connection: ConnectionSummary; now: number }) {
+  if (connection.online === null || !connection.since) {
+    return <Row label="Connection uptime" value={<span className="text-muted-foreground/60">tracking starts now</span>} />
+  }
+
+  const streakMs = now - new Date(connection.since).getTime()
+  const outage = connection.lastOutage
+  return (
+    <>
+      <Row
+        label={connection.online ? 'Connected for' : 'Offline for'}
+        value={
+          <span className="inline-flex flex-col items-end">
+            <span className={connection.online ? 'text-energy-green' : 'text-energy-red'}>
+              {connection.sinceExact ? '' : '≥ '}
+              {formatDuration(streakMs)}
+            </span>
+            <span className="text-[10px] text-muted-foreground">since {formatMoment(connection.since)}</span>
+          </span>
+        }
+      />
+      <Row
+        label="Last outage"
+        value={
+          outage ? (
+            <span className="inline-flex flex-col items-end">
+              <span>
+                {outage.exact ? '' : '≥ '}
+                {formatDuration(outage.durationMs)}
+                {outage.end === null && ' (ongoing)'}
+              </span>
+              <span className="text-[10px] text-muted-foreground">{formatMoment(outage.start)}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground/60">none</span>
+          )
+        }
+      />
+      <Row label="Disconnects" value={`${connection.disconnects24h} / 24h · ${connection.disconnects7d} / 7d`} />
+    </>
+  )
+}
+
 const NotReported = () => <span className="text-muted-foreground/60">not reported</span>
 
 export function DeviceInfoCard({ serialNumber, online }: DeviceInfoCardProps) {
-  const { data: info, isLoading, error } = useQuery({
+  const { data: info, isLoading, error, dataUpdatedAt } = useQuery({
     queryKey: ['deviceInfo', serialNumber, online],
     queryFn: async () => (await api.getDeviceInfo(serialNumber)).data,
-    // Firmware and serials rarely change; RSSI is worth a periodic refresh
-    refetchInterval: online ? 60_000 : false,
+    // Firmware and serials rarely change; RSSI and connection uptime are worth a periodic refresh
+    refetchInterval: 60_000,
     staleTime: 30_000,
   })
 
@@ -110,10 +167,21 @@ export function DeviceInfoCard({ serialNumber, online }: DeviceInfoCardProps) {
                   )
                 }
               />
+              <ConnectionRows connection={info.connection} now={dataUpdatedAt} />
               <Row label="Network (SSID)" value={info.wifi.ssid ?? <NotReported />} />
               <Row label="MAC address" value={info.wifi.macAddress ?? <NotReported />} />
               {info.wifi.firmware && <Row label="Wi-Fi module firmware" value={info.wifi.firmware} />}
             </div>
+            {info.connection.online !== null && (
+              <p className="mt-2 text-[10px] leading-snug text-muted-foreground/70">
+                Uptime is the device's link to the EcoFlow cloud, checked every 10 s, so router or internet
+                outages count too.
+                {info.connection.unobservedMs > 0 &&
+                  ` The dashboard was not running for ${formatDuration(info.connection.unobservedMs)} of this period.`}
+                {info.connection.trackingSince &&
+                  ` Tracked since ${formatMoment(info.connection.trackingSince)}.`}
+              </p>
+            )}
             {(!info.wifi.ssid || !info.wifi.macAddress) && (
               <p className="mt-2 flex gap-1 text-[10px] leading-snug text-muted-foreground/70">
                 <Wifi className="w-3 h-3 shrink-0 mt-px" />

@@ -5,6 +5,7 @@ import { getDeviceProfile } from "../services/deviceProfiles.js";
 import { buildStateSample, isUsefulSample } from "../services/stateSample.js";
 import { isRealErrorCode } from "../lib/errorClassification.js";
 import { extractTechnicalInfo } from "../services/deviceInfo.js";
+import { summarizeConnection } from "../services/connectionStats.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -15,6 +16,7 @@ import {
   getDeviceHistory,
   getLastKnownErrors,
   getLatestRawData,
+  getConnectionEvents,
   getErrorHistory,
   type AggregationType,
 } from "../db/database.js";
@@ -401,11 +403,15 @@ router.get("/:sn/info", async (req: Request, res: Response) => {
       return;
     }
 
+    const now = Date.now();
+    const { events, trackingSince } = getConnectionEvents(device.id, 7 * 24 * 60 * 60 * 1000, now);
+    const connection = summarizeConnection(events, now, trackingSince);
+
     if (device.online) {
       try {
         const quota = await ecoflowApi.getDeviceQuota(sn);
         if (quota && typeof quota === "object") {
-          res.json(extractTechnicalInfo(sn, device.device_type, quota as Record<string, unknown>));
+          res.json({ ...extractTechnicalInfo(sn, device.device_type, quota as Record<string, unknown>), connection });
           return;
         }
       } catch (error) {
@@ -414,7 +420,7 @@ router.get("/:sn/info", async (req: Request, res: Response) => {
     }
 
     const stored = getLatestRawData(device.id);
-    res.json(extractTechnicalInfo(sn, device.device_type, stored?.data ?? {}, stored?.timestamp ?? null));
+    res.json({ ...extractTechnicalInfo(sn, device.device_type, stored?.data ?? {}, stored?.timestamp ?? null), connection });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ error: message });
