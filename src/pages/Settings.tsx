@@ -5,6 +5,7 @@ import { useSettingsStore, commonTimezones } from '@/stores/settingsStore'
 import { cn } from '@/lib/utils'
 import { CheckCircle, XCircle, RefreshCw, Wifi, Database, Server, Clock, Globe, Download, AlertCircle, Loader2 } from 'lucide-react'
 import { SlackSettings } from '@/components/automation/SlackSettings'
+import { BleAccountSettings } from '@/components/settings/BleAccountSettings'
 
 export default function Settings() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -264,6 +265,11 @@ export default function Settings() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* EcoFlow account for the Bluetooth channel */}
+        <div className="rounded-lg border bg-card p-6 md:col-span-2">
+          <BleAccountSettings />
         </div>
 
         {/* Slack Integration */}

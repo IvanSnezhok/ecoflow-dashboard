@@ -17,6 +17,7 @@ let bridgeAuthenticated = true;
 let bridgeCommandFails = false;
 let cloudUp = false;
 const calls: string[] = [];
+let lastLoginBody: Record<string, string> = {};
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -36,6 +37,12 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
           error: null, pausedUntil: null, sessionsStarted: 1, quota: bleQuota, quotaUpdatedAt: now - 1_000,
         }],
       });
+    }
+    if (url.pathname === "/account/login") {
+      lastLoginBody = JSON.parse(String(init?.body));
+      return lastLoginBody.password === "right"
+        ? json({ ok: true, userIdSource: "panel", userIdHint: "…5678" })
+        : json({ error: "Login failed: 'wrong password'" }, 401);
     }
     if (url.pathname.endsWith("/command")) {
       return bridgeCommandFails ? json({ error: "device rejected the command" }, 503) : json({ ok: true });
@@ -95,6 +102,19 @@ cloudUp = true;
 list = await ecoflowApi.getDeviceList();
 assert.equal(list[0].online, 0);
 await assert.rejects(ecoflowApi.getDeviceQuota(SN), /device offline/);
+
+// Account login goes through to the bridge; a rejection keeps its 401
+const { BridgeError } = await import("./bleBridge.js");
+await bleBridge.login("me@example.com", "right", "api-e");
+assert.deepEqual(lastLoginBody, { email: "me@example.com", password: "right", region: "api-e" });
+await assert.rejects(bleBridge.login("me@example.com", "nope", "auto"), (error: unknown) =>
+  error instanceof BridgeError && error.status === 401 && /wrong password/.test(error.message));
+
+// Request logs never carry the password
+const { redactBody } = await import("../lib/redact.js");
+assert.deepEqual(redactBody({ email: "me@example.com", password: "right", region: "auto" }),
+  { email: "me@example.com", password: "***", region: "auto" });
+assert.equal(redactBody(undefined), undefined);
 
 // Merge: BLE wins its keys; stale cloud keeps only slow-changing extra-battery fields
 const cloud = { "pd.soc": 70, "pd.carWatts": 5, "bmsSlave1.fullCap": 80000, "bmsSlave1.vol": 51000, "bmsSlave1.cycles": 30 };

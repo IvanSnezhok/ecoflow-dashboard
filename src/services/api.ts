@@ -6,6 +6,7 @@ import type {
   HistoryResponse,
   ErrorHistoryResponse,
   DeviceTechnicalInfo,
+  BleOverview,
 } from "@/types/device";
 import type {
   AutomationRule,
@@ -116,6 +117,15 @@ export const api = {
 
   resumeBle: (serialNumber: string) =>
     client.post(`/devices/${serialNumber}/ble/resume`),
+
+  getBleStatus: () => client.get<BleOverview>("/ble/status"),
+
+  bleLogin: (email: string, password: string, region: string) =>
+    client.post<BleOverview>("/ble/login", { email, password, region }),
+
+  bleSetUserId: (userId: string) => client.post<BleOverview>("/ble/user-id", { userId }),
+
+  bleForgetUserId: () => client.delete<BleOverview>("/ble/account"),
 
   getDeviceErrors: (serialNumber: string, limit?: number) =>
     client.get<ErrorHistoryResponse>(`/devices/${serialNumber}/errors`, {

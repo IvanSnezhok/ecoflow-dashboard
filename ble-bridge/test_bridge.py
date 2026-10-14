@@ -1,6 +1,7 @@
 """Run with eflib on the path: PYTHONPATH=<dir containing eflib> python -m unittest"""
 
 import asyncio
+import json
 import unittest
 
 from aiohttp.test_utils import TestClient, TestServer
@@ -203,6 +204,99 @@ class SupervisorTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session.state, "reconnecting")
             # Last known values stay available, with their timestamp
             self.assertEqual(session.quota["pd.soc"], 77)
+            task.cancel()
+        finally:
+            bridge_module.eflib.NewDevice, bridge_module.eflib.is_unsupported = original_new, original_unsupported
+
+
+class AccountTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        import dataclasses
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = tempfile.TemporaryDirectory()
+        config = dataclasses.replace(Config.from_env(), data_dir=Path(self.tmp.name), user_id=None)
+        self.bridge = Bridge(config)
+        self.logins = []
+
+        async def fake_login(email, password, region):
+            self.logins.append((email, password, region))
+            if password != "right":
+                raise PermissionError("Login failed: 'wrong password'")
+            return "1234567890125678"
+
+        self.bridge.login = fake_login
+        self.client = TestClient(TestServer(build_app(self.bridge)))
+        await self.client.start_server()
+
+    async def asyncTearDown(self):
+        await self.client.close()
+        self.tmp.cleanup()
+
+    async def test_login_saves_only_the_user_id(self):
+        resp = await self.client.post("/account/login", json={"email": "me@example.com", "password": "right", "region": "api-e"})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["userIdHint"], "…5678")
+        self.assertEqual(self.bridge.user_id, "1234567890125678")
+        self.assertEqual(self.bridge.user_id_source, "panel")
+        saved = (self.bridge.config.data_dir / "user_id").read_text()
+        self.assertEqual(saved, "1234567890125678")
+        self.assertNotIn("right", saved)
+
+        status = await (await self.client.get("/status")).json()
+        self.assertTrue(status["userIdConfigured"])
+        self.assertEqual(status["userIdHint"], "…5678")
+        self.assertNotIn("1234567890125678", json.dumps(status))
+
+    async def test_login_errors(self):
+        resp = await self.client.post("/account/login", json={"email": "me@example.com", "password": "nope"})
+        self.assertEqual(resp.status, 401)
+        self.assertIn("wrong password", (await resp.json())["error"])
+        self.assertIsNone(self.bridge.user_id)
+        resp = await self.client.post("/account/login", json={"email": "", "password": "x"})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/account/login", json={"email": "a@b.c", "password": "right", "region": "mars"})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/account/login", data="not json")
+        self.assertEqual(resp.status, 400)
+
+    async def test_manual_id_and_forget(self):
+        resp = await self.client.post("/account/user-id", json={"userId": "12ab"})
+        self.assertEqual(resp.status, 400)
+        resp = await self.client.post("/account/user-id", json={"userId": " 987654321 "})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(self.bridge.user_id, "987654321")
+
+        self.bridge.config.user_id = "555"  # the .env value takes over after forgetting
+        resp = await self.client.delete("/account")
+        self.assertEqual((await resp.json())["userIdSource"], "env")
+        self.assertEqual(self.bridge.user_id, "555")
+        self.assertFalse((self.bridge.config.data_dir / "user_id").exists())
+
+    async def test_saved_id_wins_over_env(self):
+        (self.bridge.config.data_dir / "user_id").write_text("111\n")
+        self.bridge.config.user_id = "222"
+        await self.bridge.resolve_user_id()
+        self.assertEqual((self.bridge.user_id, self.bridge.user_id_source), ("111", "panel"))
+
+    async def test_account_change_reconnects_session(self):
+        import bridge as bridge_module
+
+        self.bridge.set_user_id("111", "env")
+        session = Session(sn="DCEBZ5ZE1234567", advertised_at=bridge_module.now_ms())
+        self.bridge.adverts[session.sn] = (object(), object())
+        original_new, original_unsupported = bridge_module.eflib.NewDevice, bridge_module.eflib.is_unsupported
+        bridge_module.eflib.NewDevice = lambda *_: FlowDevice()
+        bridge_module.eflib.is_unsupported = lambda _: False
+        try:
+            task = asyncio.create_task(self.bridge.supervise(session))
+            await asyncio.sleep(0.1)
+            self.assertEqual(FlowDevice.instances[-1].user_id, "111")
+            self.bridge.save_user_id("222")
+            await asyncio.sleep(2.3)
+            self.assertEqual(FlowDevice.instances[-1].user_id, "222")
+            self.assertIsNotNone(session.authenticated_since)
             task.cancel()
         finally:
             bridge_module.eflib.NewDevice, bridge_module.eflib.is_unsupported = original_new, original_unsupported

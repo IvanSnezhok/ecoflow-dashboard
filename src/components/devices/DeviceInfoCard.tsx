@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { Bluetooth, Cpu, Wifi, WifiOff } from 'lucide-react'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
@@ -150,6 +151,8 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
   else if (device.live) status = <span className="text-energy-green">Connected</span>
   else if (device.state === 'paused' && device.pausedUntil)
     status = <span className="text-energy-yellow">Paused until {formatMoment(new Date(device.pausedUntil).toISOString())}</span>
+  else if (device.state === 'waiting_for_user_id')
+    status = <Link to="/settings" className="text-energy-yellow underline">Sign in to EcoFlow in Settings</Link>
   else status = <span className="text-energy-yellow">{BLE_STATES[device.state] ?? device.state.replace(/_/g, ' ')}</span>
 
   const quality = device?.rssi != null ? bleQuality(device.rssi) : null

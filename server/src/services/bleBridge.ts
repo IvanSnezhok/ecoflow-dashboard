@@ -11,6 +11,13 @@ import type { DeviceAction } from "./deviceProfiles.js";
 
 export type BleMode = "prefer" | "fallback" | "off";
 
+/** An error answer from the bridge, with its HTTP status. */
+export class BridgeError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export interface BleDeviceStatus {
   sn: string;
   name: string | null;
@@ -33,6 +40,9 @@ interface BridgeStatus {
   scanning: boolean;
   scannerError: string | null;
   userIdConfigured: boolean;
+  userIdSource: "panel" | "env" | "login" | null;
+  userIdHint: string | null;
+  loginError: string | null;
   now: number;
   devices: BleDeviceStatus[];
 }
@@ -96,6 +106,9 @@ class BleBridgeClient {
       scanning: this.status?.scanning ?? false,
       scannerError: this.status?.scannerError ?? null,
       userIdConfigured: this.status?.userIdConfigured ?? false,
+      userIdSource: this.status?.userIdSource ?? null,
+      userIdHint: this.status?.userIdHint ?? null,
+      loginError: this.status?.loginError ?? null,
     };
   }
 
@@ -121,15 +134,15 @@ class BleBridgeClient {
     return this.device(sn)?.authenticated === true;
   }
 
-  private async post(path: string, body: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
+  private async post(path: string, body: unknown, timeoutMs = REQUEST_TIMEOUT_MS, method = "POST"): Promise<unknown> {
     const res = await fetch(`${this.url}${path}`, {
-      method: "POST",
+      method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) throw new Error(payload.error ?? `bridge HTTP ${res.status}`);
+    if (!res.ok) throw new BridgeError(payload.error ?? `bridge HTTP ${res.status}`, res.status);
     // Pick up the new state on the next poll instead of waiting for it
     void this.refresh();
     return payload;
@@ -145,6 +158,25 @@ class BleBridgeClient {
 
   async resume(sn: string): Promise<void> {
     await this.post(`/devices/${encodeURIComponent(sn)}/resume`, {});
+  }
+
+  /** Exchange the EcoFlow account login for its user ID on the bridge; the password is not stored. */
+  async login(email: string, password: string, region: string): Promise<void> {
+    await this.post("/account/login", { email, password, region }, 30_000);
+  }
+
+  async setUserId(userId: string): Promise<void> {
+    await this.post("/account/user-id", { userId });
+  }
+
+  async forgetUserId(): Promise<void> {
+    await this.post("/account", {}, REQUEST_TIMEOUT_MS, "DELETE");
+  }
+
+  /** Session summaries without the raw quota. */
+  devices() {
+    if (!this.reachable) return [];
+    return (this.status?.devices ?? []).map(({ quota: _quota, ...rest }) => ({ ...rest, live: this.freshQuota(rest.sn) !== null }));
   }
 }
 

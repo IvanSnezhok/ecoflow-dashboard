@@ -32,6 +32,8 @@ import logsRouter from "./routes/logs.js";
 import { automationRouter } from "./routes/automation.js";
 import systemRouter from "./routes/systemRoutes.js";
 import { resilienceRouter } from "./routes/resilience.js";
+import bleRouter from "./routes/ble.js";
+import { redactBody } from "./lib/redact.js";
 import { processResilienceAutomation } from "./services/resilienceService.js";
 
 const app = express();
@@ -58,9 +60,9 @@ app.use(
 app.use(cors({ origin: config.server.corsOrigin }));
 app.use(express.json());
 
-// Log all requests
+// Log all requests. Credentials (the EcoFlow account login for BLE) never reach the log.
 app.use((req, _res, next) => {
-  console.log(`[Express] ${req.method} ${req.path}`, req.body || "");
+  console.log(`[Express] ${req.method} ${req.path}`, redactBody(req.body) || "");
   next();
 });
 
@@ -82,6 +84,11 @@ app.use("/api", apiLimiter);
 app.use("/api/devices/:sn/ac-output", controlLimiter);
 app.use("/api/devices/:sn/dc-output", controlLimiter);
 app.use("/api/devices/:sn/charge-limit", controlLimiter);
+app.use("/api/ble/login", rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // each attempt is a real EcoFlow account login
+  message: { error: "Too many login attempts, please wait" },
+}));
 
 // Routes
 app.use("/api/devices", devicesRouter);
@@ -89,6 +96,7 @@ app.use("/api/logs", logsRouter);
 app.use("/api/automation", automationRouter);
 app.use("/api/system", systemRouter);
 app.use("/api/resilience", resilienceRouter);
+app.use("/api/ble", bleRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {

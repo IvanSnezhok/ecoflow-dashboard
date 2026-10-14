@@ -246,8 +246,13 @@ charts, automation and the outage logic work unchanged on BLE data.
 1. On the host: the adapter must be up and `bluetoothd` running
    (`bluetoothctl show` lists it as `Powered: yes`). Keep it within a few metres of
    the station.
-2. Add to `.env` either your EcoFlow user ID or the account login (used once to look
-   the ID up; the ID is then cached in `server/data/ble/`):
+2. Open **Settings → Bluetooth · EcoFlow account** in the panel and sign in with the
+   account the station is bound to in the EcoFlow app (or paste the user ID). The
+   password is sent once to EcoFlow to look up the user ID and is never stored or
+   logged; only the ID is kept, in `server/data/ble/user_id`, so the bridge also starts
+   without internet. An ID saved there takes precedence over `.env`.
+
+   Alternatively set it in `.env` (the login is retried until the internet is up):
 
    ```
    ECOFLOW_BLE_EMAIL=you@example.com
@@ -285,8 +290,8 @@ showing BLE data after a restart without internet.
   page shows a `BLE` / `BLE ONLY` badge while data comes over Bluetooth.
 - Wi-Fi uptime in Device Info still tracks the cloud link only.
 
-The bridge's API (`/status`, `/devices/{sn}/command|pause|resume`) is reachable only
-inside the compose network. Its tests need `eflib` on the path:
+The bridge's API (`/status`, `/devices/{sn}/command|pause|resume`, `/account/*`) is
+reachable only inside the compose network; the panel proxies it under `/api/ble/*`. Its tests need `eflib` on the path:
 
 ```bash
 git clone https://github.com/rabits/ha-ef-ble /tmp/ha-ef-ble

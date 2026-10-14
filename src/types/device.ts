@@ -175,6 +175,9 @@ export interface BleStatus {
   scanning: boolean;
   scannerError: string | null;
   userIdConfigured: boolean;
+  userIdSource: "panel" | "env" | "login" | null;
+  userIdHint: string | null; // last digits only
+  loginError: string | null;
   device: {
     state: string;
     authenticated: boolean;
@@ -199,4 +202,9 @@ export interface ConnectionSummary {
   disconnects24h: number;
   disconnects7d: number;
   trackingSince: string | null;
+}
+
+// GET /api/ble/status
+export interface BleOverview extends Omit<BleStatus, "device"> {
+  devices: Array<{ sn: string; state: string; live: boolean; error: string | null; rssi: number | null }>;
 }
