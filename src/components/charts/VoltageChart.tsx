@@ -115,7 +115,7 @@ export const VoltageChart = memo(function VoltageChart({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={formattedData} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
+      <LineChart data={formattedData} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
         {/* Dotted grid */}
         <CartesianGrid
           strokeDasharray="2 4"
@@ -134,7 +134,7 @@ export const VoltageChart = memo(function VoltageChart({
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
           interval="preserveStartEnd"
-          minTickGap={50}
+          minTickGap={40}
         />
         <YAxis
           domain={['dataMin - 1', 'dataMax + 1']}
@@ -168,7 +168,7 @@ export const VoltageChart = memo(function VoltageChart({
             strokeOpacity={0.5}
             label={{
               value: `avg ${avgVoltage.toFixed(1)}V`,
-              position: 'right',
+              position: 'insideTopRight',
               fill: chartColors.text,
               fontSize: 9,
               fontFamily: 'JetBrains Mono, monospace',
@@ -184,7 +184,8 @@ export const VoltageChart = memo(function VoltageChart({
             stroke={chartColors.voltage.stroke}
             strokeWidth={2}
             dot={false}
-            connectNulls={true}
+            connectNulls={false}
+          isAnimationActive={false}
             activeDot={{
               r: 4,
               fill: chartColors.voltage.stroke,
@@ -201,7 +202,8 @@ export const VoltageChart = memo(function VoltageChart({
             stroke={chartColors.extraBattery1.stroke}
             strokeWidth={2}
             dot={false}
-            connectNulls={true}
+            connectNulls={false}
+          isAnimationActive={false}
             activeDot={{
               r: 4,
               fill: chartColors.extraBattery1.stroke,
@@ -218,7 +220,8 @@ export const VoltageChart = memo(function VoltageChart({
             stroke={chartColors.extraBattery2.stroke}
             strokeWidth={2}
             dot={false}
-            connectNulls={true}
+            connectNulls={false}
+          isAnimationActive={false}
             activeDot={{
               r: 4,
               fill: chartColors.extraBattery2.stroke,

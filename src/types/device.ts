@@ -48,7 +48,9 @@ export interface DeviceErrorCodes {
   invErrCode: number; // Inverter error code
   mpptFaultCode: number; // MPPT/Solar controller fault code
   overloadState: number; // Overload state (0 = normal)
-  emsIsNormal: boolean; // EMS normal operation flag
+  emsIsNormal: boolean; // EMS flag: false = sleep mode (not an error)
+  bmsFault?: number; // bmsMaster.bmsFault: permanent BMS fault (0 = none)
+  bmsWarningState?: number; // ems.bmsWarningState bits: 0 hi-temp, 1 low-temp, 2 overload
 }
 
 // Last known errors for offline devices

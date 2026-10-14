@@ -50,6 +50,16 @@ export const periodLabels: Record<string, string> = {
   'custom': 'Custom',
 }
 
+// Compact labels for phone-width period pickers
+export const periodShortLabels: Record<string, string> = {
+  '10m': '10m',
+  '1h': '1h',
+  '24h': '24h',
+  '7d': '7d',
+  '30d': '30d',
+  'custom': 'Custom',
+}
+
 // Legacy function for backward compatibility (uses store internally)
 export const formatTimestamp = (timestamp: string, period: string, customRangeDurationHours?: number): string => {
   const { timezone, timeFormat } = useSettingsStore.getState()

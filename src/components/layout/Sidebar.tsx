@@ -12,7 +12,7 @@ const navigation = [
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
-export function Sidebar() {
+export function Sidebar({ className }: { className?: string }) {
   const location = useLocation()
   const { devices, isLoading } = useDeviceStore()
   const { wsConnected, mqttConnected } = useMqtt()
@@ -21,7 +21,7 @@ export function Sidebar() {
   const onlineDevices = devices.filter(d => d.online && d.state)
 
   return (
-    <aside className="w-56 border-r bg-card flex flex-col min-h-[calc(100vh-4rem)]">
+    <aside className={cn('w-56 shrink-0 border-r bg-card flex-col overflow-y-auto', className)}>
       {/* Navigation - Compact */}
       <nav className="p-3 space-y-0.5">
         {navigation.map((item) => {
@@ -31,7 +31,7 @@ export function Sidebar() {
               key={item.name}
               to={item.href}
               className={cn(
-                'flex items-center gap-2.5 px-2.5 py-1.5 rounded-sm text-sm font-medium transition-all',
+                'flex items-center gap-2.5 px-2.5 py-2.5 md:py-1.5 rounded-sm text-sm font-medium transition-all',
                 'border-l-2',
                 isActive
                   ? 'bg-primary/10 text-primary border-l-primary'
@@ -80,7 +80,7 @@ export function Sidebar() {
                   key={device.serialNumber}
                   to={`/device/${device.serialNumber}`}
                   className={cn(
-                    'flex items-center gap-2 px-2 py-1.5 rounded-sm text-xs transition-all',
+                    'flex items-center gap-2 px-2 py-2.5 md:py-1.5 rounded-sm text-xs transition-all',
                     'border-l-2',
                     isActive
                       ? 'bg-accent/50 border-l-accent'

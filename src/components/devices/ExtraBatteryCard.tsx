@@ -1,6 +1,7 @@
-import { Thermometer, Zap, RefreshCw, Heart, Activity, AlertTriangle } from 'lucide-react'
+import { Thermometer, Zap, RefreshCw, Heart, Activity, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { BatteryGauge } from './BatteryGauge'
 import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
+import { getErrorInfo } from '@/utils/errorCodes'
 import { cn } from '@/lib/utils'
 import type { ExtraBatteryState } from '@/types/device'
 
@@ -62,17 +63,23 @@ export function ExtraBatteryCard({ battery, index }: ExtraBatteryCardProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {battery.errCode !== undefined && battery.errCode !== 0 && (
-            <ErrorTooltip errorCode={battery.errCode} errorType="battery">
-              <span className={cn(
-                'text-[10px] font-medium px-2 py-1 rounded-full uppercase tracking-wider',
-                'bg-red-500/10 text-red-600 dark:text-red-400 flex items-center gap-1'
-              )}>
-                <AlertTriangle className="w-3 h-3" />
-                Error {battery.errCode}
-              </span>
-            </ErrorTooltip>
-          )}
+          {battery.errCode !== undefined && battery.errCode !== 0 && (() => {
+            // Status codes (6 = fully charged, 23 = charged to limit) are not errors
+            const info = getErrorInfo('battery', battery.errCode)
+            return (
+              <ErrorTooltip errorCode={battery.errCode} errorType="battery">
+                <span className={cn(
+                  'text-[10px] font-medium px-2 py-1 rounded-full uppercase tracking-wider flex items-center gap-1',
+                  info.severity === 'info' && 'bg-green-500/10 text-green-600 dark:text-green-400',
+                  info.severity === 'warning' && 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+                  info.severity === 'error' && 'bg-red-500/10 text-red-600 dark:text-red-400'
+                )}>
+                  {info.severity === 'info' ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                  {info.severity === 'info' ? info.title : `Error ${battery.errCode}`}
+                </span>
+              </ErrorTooltip>
+            )
+          })()}
           <span className={cn(
             'text-[10px] font-medium px-2 py-1 rounded-full uppercase tracking-wider',
             'bg-green-500/10 text-green-600 dark:text-green-400'

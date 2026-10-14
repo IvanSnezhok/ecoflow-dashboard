@@ -6,7 +6,6 @@ import {
   BatteryCharging,
   Zap,
   Sun,
-  Plug,
   Thermometer,
   Activity,
   TrendingUp,
@@ -14,14 +13,16 @@ import {
 } from 'lucide-react'
 import { useDeviceStore } from '@/stores/deviceStore'
 import {
-  BatteryChart,
-  PowerChart,
+  BatteryChartPanel,
+  PowerChartPanel,
   TemperatureChart,
   VoltageChart,
   ExtraBatteryChart,
   DateRangePicker,
   ChartContainer,
   useChartData,
+  summarizePower,
+  formatEnergy,
 } from '@/components/charts'
 import { cn } from '@/lib/utils'
 import type { ChartPeriod, DateRange } from '@/types/device'
@@ -39,11 +40,11 @@ interface StatCardProps {
 
 function StatCard({ icon, label, value, unit, subtext, trend, trendValue, colorClass = 'text-primary' }: StatCardProps) {
   return (
-    <div className="rounded-sm border bg-card p-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className={cn('flex items-center gap-2', colorClass)}>
+    <div className="rounded-sm border bg-card p-3 sm:p-4 min-w-0">
+      <div className="flex items-center justify-between gap-1 mb-2">
+        <div className={cn('flex items-center gap-2 min-w-0', colorClass)}>
           {icon}
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
             {label}
           </span>
         </div>
@@ -61,7 +62,7 @@ function StatCard({ icon, label, value, unit, subtext, trend, trendValue, colorC
         )}
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-mono font-bold tabular-nums">{value}</span>
+        <span className="text-xl sm:text-2xl font-mono font-bold tabular-nums">{value}</span>
         {unit && <span className="text-sm text-muted-foreground font-mono">{unit}</span>}
       </div>
       {subtext && (
@@ -78,7 +79,7 @@ export default function Statistics() {
   const [customRange, setCustomRange] = useState<DateRange | null>(null)
 
   const device = devices.find((d) => d.serialNumber === serialNumber)
-  const { data: chartData, isLoading, error, refetch } = useChartData(
+  const { data: chartData, isLoading, isFetching, error, refetch } = useChartData(
     serialNumber || '',
     chartPeriod,
     customRange
@@ -106,26 +107,9 @@ export default function Statistics() {
     const minSoc = Math.min(...socData)
     const maxSoc = Math.max(...socData)
 
-    // Calculate energy (Wh) by integrating power over time intervals
-    // Energy = Power × Time, summing for each interval between data points
-    let totalEnergyWh = 0
-    for (let i = 0; i < chartData.length - 1; i++) {
-      const current = chartData[i]
-      const next = chartData[i + 1]
-
-      // Calculate time interval in hours
-      const t1 = new Date(current.timestamp).getTime()
-      const t2 = new Date(next.timestamp).getTime()
-      const intervalHours = (t2 - t1) / (1000 * 60 * 60) // ms to hours
-
-      // Get power values (use 0 if null)
-      const acOutput = current.acOutputWatts || 0
-      const dcOutput = current.dcOutputWatts || 0
-      const totalPower = acOutput + dcOutput
-
-      // Energy = Power × Time
-      totalEnergyWh += totalPower * intervalHours
-    }
+    // Energy (Wh) = power integrated over time; gaps in the data count for nothing
+    const consumedWh = summarizePower(chartData, ['acOutputWatts', 'dcOutputWatts']).energyWh
+    const chargedWh = summarizePower(chartData, ['acInputWatts', 'solarInputWatts']).energyWh
 
     return {
       avgSoc,
@@ -133,7 +117,8 @@ export default function Statistics() {
       maxSoc,
       maxSolar,
       avgSolar,
-      totalEnergyWh: Math.round(totalEnergyWh),
+      consumedWh,
+      chargedWh,
       avgTemp,
     }
   }, [chartData])
@@ -182,7 +167,7 @@ export default function Statistics() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header - Minimalist */}
       <div className="flex items-center gap-3">
         <Link
@@ -216,7 +201,7 @@ export default function Statistics() {
 
       {/* Summary Cards */}
       {stats && (
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-2 sm:gap-3 grid-cols-2 lg:grid-cols-4">
           <StatCard
             icon={<Battery className="w-4 h-4" />}
             label="Average Charge"
@@ -235,10 +220,9 @@ export default function Statistics() {
           />
           <StatCard
             icon={<Activity className="w-4 h-4" />}
-            label="Total Consumption"
-            value={stats.totalEnergyWh}
-            unit="Wh"
-            subtext="For selected period"
+            label="Consumed"
+            value={formatEnergy(stats.consumedWh)}
+            subtext={`Charged ${formatEnergy(stats.chargedWh)}`}
             colorClass="text-energy-blue"
           />
           <StatCard
@@ -254,16 +238,16 @@ export default function Statistics() {
       {/* Charts Grid - 2 columns for better layout */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Battery Level Chart */}
-        <ChartContainer
-          title="Battery Level"
-          icon={<Battery className="w-4 h-4 text-energy-green" />}
+        <BatteryChartPanel
+          data={chartData}
+          period={chartPeriod}
+          customRange={customRange}
           isLoading={isLoading}
+          isFetching={isFetching}
           error={error}
           onRefresh={refetch}
-          isEmpty={chartData.length === 0}
-        >
-          <BatteryChart data={chartData} period={chartPeriod} height={220} customRange={customRange} />
-        </ChartContainer>
+          height={220}
+        />
 
         {/* Temperature Chart */}
         <ChartContainer
@@ -278,42 +262,31 @@ export default function Statistics() {
         </ChartContainer>
       </div>
 
-      {/* Power Charts - Full Width */}
-      <ChartContainer
-        title="Input Power"
-        icon={<Plug className="w-4 h-4 text-energy-purple" />}
-        isLoading={isLoading}
-        error={error}
-        onRefresh={refetch}
-        isEmpty={chartData.length === 0}
-      >
-        <PowerChart
+      {/* Charging vs consumption: separate stacked charts, each with its own totals */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <PowerChartPanel
+          mode="input"
           data={chartData}
           period={chartPeriod}
-          height={250}
-          showInputs={true}
-          showOutputs={false}
           customRange={customRange}
+          isLoading={isLoading}
+          isFetching={isFetching}
+          error={error}
+          onRefresh={refetch}
+          height={250}
         />
-      </ChartContainer>
-
-      <ChartContainer
-        title="Output Power"
-        icon={<Zap className="w-4 h-4 text-energy-blue" />}
-        isLoading={isLoading}
-        error={error}
-        onRefresh={refetch}
-        isEmpty={chartData.length === 0}
-      >
-        <PowerChart
+        <PowerChartPanel
+          mode="output"
           data={chartData}
           period={chartPeriod}
-          height={250}
-          showInputs={false}
-          showOutputs={true}
           customRange={customRange}
+          isLoading={isLoading}
+          isFetching={isFetching}
+          error={error}
+          onRefresh={refetch}
+          height={250}
         />
-      </ChartContainer>
+      </div>
 
       {/* Voltage Chart - Only show if voltage data exists */}
       {hasVoltageData && (

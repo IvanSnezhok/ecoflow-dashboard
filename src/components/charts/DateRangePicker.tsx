@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { Calendar, Clock, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ChartPeriod, DateRange } from '@/types/device'
-import { periodLabels } from './chartConfig'
+import { periodLabels, periodShortLabels } from './chartConfig'
 import { cn } from '@/lib/utils'
 
 interface DateRangePickerProps {
@@ -94,19 +94,20 @@ export function DateRangePicker({
     <div className={cn('space-y-3', className)}>
       {/* Preset buttons row */}
       <div className="flex flex-wrap gap-1">
-        <div className="flex gap-1 p-1 bg-muted rounded-lg">
+        <div className="flex flex-1 sm:flex-none gap-1 p-1 bg-muted rounded-lg">
           {presetPeriods.map((p) => (
             <button
               key={p}
               onClick={() => handlePresetClick(p)}
               className={cn(
-                'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                'flex-1 sm:flex-none px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors whitespace-nowrap',
                 period === p && !isExpanded
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              {periodLabels[p]}
+              <span className="sm:hidden">{periodShortLabels[p]}</span>
+              <span className="hidden sm:inline">{periodLabels[p]}</span>
             </button>
           ))}
         </div>
@@ -114,7 +115,7 @@ export function DateRangePicker({
         <button
           onClick={handleCustomClick}
           className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors',
+            'flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors w-full sm:w-auto',
             period === 'custom'
               ? 'bg-primary text-primary-foreground'
               : 'bg-muted text-muted-foreground hover:text-foreground'
@@ -132,7 +133,7 @@ export function DateRangePicker({
 
       {/* Expanded custom range picker */}
       {isExpanded && (
-        <div className="p-4 rounded-xl border bg-card space-y-4">
+        <div className="p-3 sm:p-4 rounded-xl border bg-card space-y-4">
           {/* Quick range buttons */}
           <div className="flex flex-wrap gap-2">
             <span className="text-sm text-muted-foreground mr-2">Quick:</span>

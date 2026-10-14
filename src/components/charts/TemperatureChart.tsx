@@ -80,7 +80,7 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 10, right: 55, left: 0, bottom: 5 }}>
+      <LineChart data={data} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={chartColors.temperature.stroke} stopOpacity={0.2} />
@@ -106,7 +106,7 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
           axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
           dy={5}
           interval="preserveStartEnd"
-          minTickGap={50}
+          minTickGap={40}
         />
         <YAxis
           tickFormatter={(value) => `${value}°C`}
@@ -132,7 +132,7 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
             strokeOpacity={0.5}
             label={{
               value: `avg ${avgTemp}°C`,
-              position: 'right',
+              position: 'insideTopRight',
               fill: chartColors.text,
               fontSize: 9,
               fontFamily: 'JetBrains Mono, monospace',
@@ -154,7 +154,8 @@ export const TemperatureChart = memo(function TemperatureChart({ data, period, h
           stroke={chartColors.temperature.stroke}
           strokeWidth={2}
           dot={false}
-          connectNulls={true}
+          connectNulls={false}
+          isAnimationActive={false}
           activeDot={{
             r: 4,
             fill: chartColors.temperature.stroke,

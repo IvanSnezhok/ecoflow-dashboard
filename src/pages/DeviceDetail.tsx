@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft,
-  Zap,
   Battery,
   Power,
   BarChart3,
@@ -17,46 +16,17 @@ import { BatteryPack } from "@/components/devices/BatteryPack";
 import { TechnicalToggle } from "@/components/ui/TechnicalToggle";
 import { TechnicalSlider } from "@/components/ui/TechnicalSlider";
 import {
-  BatteryChart,
-  PowerChart,
+  BatteryChartPanel,
+  PowerChartPanel,
   PeriodSelector,
-  ChartContainer,
   useChartData,
+  parseServerTimestamp,
 } from "@/components/charts";
 import { api } from "@/services/api";
 import { cn } from "@/lib/utils";
-import { ErrorTooltip } from "@/components/ui/ErrorTooltip";
-import type { ChartPeriod, DeviceErrorCodes, LastKnownErrors } from "@/types/device";
-
-// Status codes to hide (charging status, not actual errors)
-const HIDDEN_STATUS_CODES = [5, 6, 23];
-
-// Helper to check if error code is a real error (not a status)
-function isRealError(code: number): boolean {
-  return code !== 0 && !HIDDEN_STATUS_CODES.includes(code);
-}
-
-// Helper function to check if there are any errors
-function hasErrors(errorCodes: DeviceErrorCodes | LastKnownErrors): boolean {
-  const hasBaseErrors =
-    isRealError(errorCodes.bmsMasterErrCode) ||
-    errorCodes.invErrCode !== 0 ||
-    errorCodes.mpptFaultCode !== 0 ||
-    errorCodes.overloadState !== 0 ||
-    !errorCodes.emsIsNormal;
-
-  // Check extra battery errors if present (LastKnownErrors)
-  if ("bmsSlave1ErrCode" in errorCodes || "bmsSlave2ErrCode" in errorCodes) {
-    const lastKnown = errorCodes as LastKnownErrors;
-    return (
-      hasBaseErrors ||
-      (lastKnown.bmsSlave1ErrCode !== undefined && isRealError(lastKnown.bmsSlave1ErrCode)) ||
-      (lastKnown.bmsSlave2ErrCode !== undefined && isRealError(lastKnown.bmsSlave2ErrCode))
-    );
-  }
-
-  return hasBaseErrors;
-}
+import { DeviceIssues } from "@/components/devices/DeviceIssues";
+import { collectDeviceIssues } from "@/utils/errorCodes";
+import type { ChartPeriod } from "@/types/device";
 
 export default function DeviceDetail() {
   const { serialNumber } = useParams<{ serialNumber: string }>();
@@ -73,6 +43,7 @@ export default function DeviceDetail() {
   const {
     data: chartData,
     isLoading: isChartLoading,
+    isFetching: isChartFetching,
     error: chartError,
     refetch: refetchChart,
   } = useChartData(serialNumber || "", chartPeriod);
@@ -243,130 +214,34 @@ export default function DeviceDetail() {
         )}
       </div>
 
-      {/* Error Alerts - show current errors or last known errors for offline devices */}
-      {state?.errorCodes && hasErrors(state.errorCodes) && (
-        <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-4">
-          <h3 className="font-semibold flex items-center gap-2 text-red-600 dark:text-red-400 mb-3">
-            <AlertTriangle className="w-5 h-5" />
-            Device Errors
-            <span className="text-xs font-normal text-muted-foreground ml-2">
-              (hover for details)
-            </span>
-          </h3>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {isRealError(state.errorCodes.bmsMasterErrCode) && (
-              <ErrorTooltip errorCode={state.errorCodes.bmsMasterErrCode} errorType="bms">
-                <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-lg px-3 py-2">
-                  <span className="text-red-500 font-medium">BMS Error:</span>
-                  <span className="font-mono">{state.errorCodes.bmsMasterErrCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {state.errorCodes.invErrCode !== 0 && (
-              <ErrorTooltip errorCode={state.errorCodes.invErrCode} errorType="inv">
-                <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-lg px-3 py-2">
-                  <span className="text-red-500 font-medium">Inverter Error:</span>
-                  <span className="font-mono">{state.errorCodes.invErrCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {state.errorCodes.mpptFaultCode !== 0 && (
-              <ErrorTooltip errorCode={state.errorCodes.mpptFaultCode} errorType="mppt">
-                <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-lg px-3 py-2">
-                  <span className="text-red-500 font-medium">MPPT Fault:</span>
-                  <span className="font-mono">{state.errorCodes.mpptFaultCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {state.errorCodes.overloadState !== 0 && (
-              <ErrorTooltip errorCode={state.errorCodes.overloadState} errorType="overload">
-                <div className="flex items-center gap-2 text-sm bg-orange-500/10 rounded-lg px-3 py-2">
-                  <span className="text-orange-500 font-medium">Overload:</span>
-                  <span className="font-mono">Active</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {!state.errorCodes.emsIsNormal && (
-              <ErrorTooltip errorCode={0} errorType="ems">
-                <div className="flex items-center gap-2 text-sm bg-orange-500/10 rounded-lg px-3 py-2">
-                  <span className="text-orange-500 font-medium">EMS Status:</span>
-                  <span className="font-mono">Abnormal</span>
-                </div>
-              </ErrorTooltip>
-            )}
-          </div>
-        </div>
+      {/* Current issues (live) or last known ones (offline). Status codes such as
+          "fully charged" are shown as chips, not as errors. */}
+      {state?.errorCodes && (
+        <DeviceIssues
+          issues={[
+            // Battery and DC status flags are shown in the Battery Pack instead
+            ...collectDeviceIssues(state.errorCodes).filter(
+              (issue) => issue.info.severity !== "info" || (issue.type !== "bms" && issue.type !== "mppt"),
+            ),
+            // Extra-battery status (e.g. fully charged) is shown in the Battery Pack;
+            // only real problems belong in the banner
+            ...collectDeviceIssues({
+              ...state.errorCodes,
+              bmsMasterErrCode: 0, invErrCode: 0, mpptFaultCode: 0, overloadState: 0,
+              emsIsNormal: true, bmsFault: 0, bmsWarningState: 0,
+              bmsSlave1ErrCode: state.extraBattery1?.errCode,
+              bmsSlave2ErrCode: state.extraBattery2?.errCode,
+              timestamp: state.timestamp,
+            }).filter((issue) => issue.info.severity !== "info"),
+          ]}
+        />
       )}
-
-      {/* Last Known Errors - show for offline devices */}
-      {!device.online && device.lastKnownErrors && hasErrors(device.lastKnownErrors) && (
-        <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 p-4">
-          <h3 className="font-semibold flex items-center gap-2 text-amber-600 dark:text-amber-400 mb-3">
-            <AlertTriangle className="w-5 h-5" />
-            Last Known Errors
-            <span className="text-xs font-normal text-muted-foreground ml-2">
-              (from {new Date(device.lastKnownErrors.timestamp).toLocaleString()})
-            </span>
-          </h3>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {isRealError(device.lastKnownErrors.bmsMasterErrCode) && (
-              <ErrorTooltip errorCode={device.lastKnownErrors.bmsMasterErrCode} errorType="bms">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">BMS Error:</span>
-                  <span className="font-mono">{device.lastKnownErrors.bmsMasterErrCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {device.lastKnownErrors.invErrCode !== 0 && (
-              <ErrorTooltip errorCode={device.lastKnownErrors.invErrCode} errorType="inv">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">Inverter Error:</span>
-                  <span className="font-mono">{device.lastKnownErrors.invErrCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {device.lastKnownErrors.mpptFaultCode !== 0 && (
-              <ErrorTooltip errorCode={device.lastKnownErrors.mpptFaultCode} errorType="mppt">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">MPPT Fault:</span>
-                  <span className="font-mono">{device.lastKnownErrors.mpptFaultCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {device.lastKnownErrors.overloadState !== 0 && (
-              <ErrorTooltip errorCode={device.lastKnownErrors.overloadState} errorType="overload">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">Overload:</span>
-                  <span className="font-mono">Active</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {!device.lastKnownErrors.emsIsNormal && (
-              <ErrorTooltip errorCode={0} errorType="ems">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">EMS Status:</span>
-                  <span className="font-mono">Abnormal</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {device.lastKnownErrors.bmsSlave1ErrCode !== undefined && isRealError(device.lastKnownErrors.bmsSlave1ErrCode) && (
-              <ErrorTooltip errorCode={device.lastKnownErrors.bmsSlave1ErrCode} errorType="battery">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">Extra Battery 1:</span>
-                  <span className="font-mono">{device.lastKnownErrors.bmsSlave1ErrCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-            {device.lastKnownErrors.bmsSlave2ErrCode !== undefined && isRealError(device.lastKnownErrors.bmsSlave2ErrCode) && (
-              <ErrorTooltip errorCode={device.lastKnownErrors.bmsSlave2ErrCode} errorType="battery">
-                <div className="flex items-center gap-2 text-sm bg-amber-500/10 rounded-lg px-3 py-2">
-                  <span className="text-amber-600 font-medium">Extra Battery 2:</span>
-                  <span className="font-mono">{device.lastKnownErrors.bmsSlave2ErrCode}</span>
-                </div>
-              </ErrorTooltip>
-            )}
-          </div>
-        </div>
+      {!device.online && device.lastKnownErrors && (
+        <DeviceIssues
+          title="Last known issues"
+          subtitle={`recorded ${new Date(parseServerTimestamp(device.lastKnownErrors.timestamp)).toLocaleString()}`}
+          issues={collectDeviceIssues(device.lastKnownErrors).filter((issue) => issue.info.severity !== "info")}
+        />
       )}
 
       {/* Energy Flow Diagram - Full Width */}
@@ -388,6 +263,7 @@ export default function DeviceDetail() {
             mainSoc={state.batterySoc}
             mainIsCharging={isCharging}
             mainTemp={state.temperature}
+            mainErrCode={state.errorCodes?.bmsMasterErrCode}
             extraBattery1={state.extraBattery1}
             extraBattery2={state.extraBattery2}
           />
@@ -526,54 +402,65 @@ export default function DeviceDetail() {
 
       {/* Usage Charts Section */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex items-center gap-2 mr-auto">
             <BarChart3 className="w-4 h-4 text-primary" />
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Usage Charts
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
+          <div className="flex items-center gap-3 sm:order-last">
             <Link
               to={`/device/${serialNumber}/errors`}
-              className="flex items-center gap-1 text-[10px] font-medium text-energy-yellow hover:text-energy-yellow/80 transition-colors"
+              className="flex items-center gap-1 py-1 text-[11px] sm:text-[10px] font-medium text-energy-yellow hover:text-energy-yellow/80 transition-colors"
             >
               <AlertTriangle className="w-3 h-3" />
               Errors
             </Link>
             <Link
               to={`/statistics/${serialNumber}`}
-              className="flex items-center gap-1 text-[10px] font-medium text-primary hover:text-primary/80 transition-colors"
+              className="flex items-center gap-1 py-1 text-[11px] sm:text-[10px] font-medium text-primary hover:text-primary/80 transition-colors"
             >
               Statistics
               <ExternalLink className="w-3 h-3" />
             </Link>
           </div>
+          <PeriodSelector value={chartPeriod} onChange={setChartPeriod} className="w-full sm:w-auto" />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <ChartContainer
-            title="Battery Level"
-            icon={<Battery className="w-4 h-4 text-energy-green" />}
+        {/* Charging and consumption get separate charts: one shared chart with four
+            similar lines was hard to read */}
+        <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <BatteryChartPanel
+            data={chartData}
+            period={chartPeriod}
             isLoading={isChartLoading}
+            isFetching={isChartFetching}
             error={chartError}
             onRefresh={refetchChart}
-            isEmpty={chartData.length === 0}
-          >
-            <BatteryChart data={chartData} period={chartPeriod} height={180} />
-          </ChartContainer>
-
-          <ChartContainer
-            title="Power"
-            icon={<Zap className="w-4 h-4 text-energy-blue" />}
+            height={180}
+            className="md:col-span-2 xl:col-span-1"
+          />
+          <PowerChartPanel
+            mode="input"
+            data={chartData}
+            period={chartPeriod}
             isLoading={isChartLoading}
+            isFetching={isChartFetching}
             error={chartError}
             onRefresh={refetchChart}
-            isEmpty={chartData.length === 0}
-          >
-            <PowerChart data={chartData} period={chartPeriod} height={180} />
-          </ChartContainer>
+            height={180}
+          />
+          <PowerChartPanel
+            mode="output"
+            data={chartData}
+            period={chartPeriod}
+            isLoading={isChartLoading}
+            isFetching={isChartFetching}
+            error={chartError}
+            onRefresh={refetchChart}
+            height={180}
+          />
         </div>
       </div>
     </div>

@@ -23,7 +23,7 @@ function FlowLine({
   const strokeColor = color.replace('bg-', 'stroke-')
 
   return (
-    <div className={cn('relative flex-1 h-3 min-w-[40px]', className)}>
+    <div className={cn('relative flex-1 h-3 min-w-[12px] sm:min-w-[40px]', className)}>
       <svg className="w-full h-full" preserveAspectRatio="none">
         {/* Base dashed line */}
         <line
@@ -98,10 +98,10 @@ function EnergyNode({
   colorClass: string
 }) {
   return (
-    <div className="flex flex-col items-center gap-1 min-w-[70px]">
+    <div className="flex flex-col items-center gap-1 min-w-[52px] sm:min-w-[70px]">
       <div
         className={cn(
-          'p-2.5 rounded-lg transition-all duration-300',
+          'p-2 sm:p-2.5 rounded-lg transition-all duration-300',
           active ? colorClass : 'bg-muted/50 text-muted-foreground'
         )}
       >
@@ -111,7 +111,7 @@ function EnergyNode({
         {label}
       </span>
       <span className={cn(
-        'text-base font-mono font-bold tabular-nums',
+        'text-sm sm:text-base font-mono font-bold tabular-nums',
         active ? 'text-foreground' : 'text-muted-foreground'
       )}>
         {value}
@@ -133,9 +133,9 @@ export function EnergyFlowDiagram({
   const netPower = totalInput - acOutput
 
   return (
-    <div className="p-4 rounded-sm border bg-card">
+    <div className="p-3 sm:p-4 rounded-sm border bg-card overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
           <Zap className="w-3.5 h-3.5" />
           Energy Flow
@@ -151,7 +151,7 @@ export function EnergyFlowDiagram({
       </div>
 
       {/* Flow Diagram - Horizontal Layout */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3">
         {/* Input Sources Column */}
         <div className="flex flex-col gap-4">
           {/* Solar */}
@@ -175,7 +175,7 @@ export function EnergyFlowDiagram({
         </div>
 
         {/* Input Lines to Battery */}
-        <div className="flex flex-col gap-4 flex-1">
+        <div className="flex flex-col gap-4 flex-1 min-w-0">
           {/* Solar line */}
           <div className="flex items-center h-[70px]">
             <FlowLine active={solarInput > 0} color="bg-energy-yellow" />
@@ -189,10 +189,10 @@ export function EnergyFlowDiagram({
         </div>
 
         {/* Battery (Center) */}
-        <div className="flex flex-col items-center px-4">
+        <div className="flex flex-col items-center px-0 sm:px-4">
           <div
             className={cn(
-              'relative p-5 rounded-lg border-2 transition-all duration-300',
+              'relative p-3 sm:p-5 rounded-lg border-2 transition-all duration-300',
               isCharging ? 'bg-energy-green/5 border-energy-green/40' :
               isDischarging ? 'bg-energy-blue/5 border-energy-blue/40' :
               'bg-muted/30 border-border'
@@ -202,7 +202,7 @@ export function EnergyFlowDiagram({
             <div className="relative flex items-center justify-center">
               {/* Offset battery icon to visually center it (compensate for terminal on right) */}
               <Battery className={cn(
-                'w-14 h-14 transition-colors -mr-1',
+                'w-10 h-10 sm:w-14 sm:h-14 transition-colors -mr-1',
                 isCharging ? 'text-energy-green' :
                 isDischarging ? 'text-energy-blue' :
                 'text-muted-foreground'
@@ -223,7 +223,7 @@ export function EnergyFlowDiagram({
             {/* SOC display */}
             <div className="text-center mt-2">
               <span className={cn(
-                'text-3xl font-mono font-bold tabular-nums',
+                'text-2xl sm:text-3xl font-mono font-bold tabular-nums',
                 batterySoc <= 20 ? 'text-energy-red' :
                 batterySoc <= 40 ? 'text-energy-yellow' :
                 'text-energy-green'
@@ -247,7 +247,7 @@ export function EnergyFlowDiagram({
         </div>
 
         {/* Output Line from Battery */}
-        <div className="flex items-center flex-1">
+        <div className="flex items-center flex-1 min-w-0">
           <FlowLine active={acOutput > 0} color="bg-energy-blue" />
           <FlowArrow active={acOutput > 0} color="bg-energy-blue" />
         </div>

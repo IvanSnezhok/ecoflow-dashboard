@@ -2,6 +2,7 @@ import Database, { type Database as DatabaseType } from 'better-sqlite3'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { compressRawData, loadDictionary, parseRawData } from '../lib/rawDataCodec.js'
+import { isStatusCode } from '../lib/errorClassification.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // ECOFLOW_DB_PATH lets tests and maintenance scripts point at a copy of the database.
@@ -275,13 +276,14 @@ export function getAllDevices() {
 export function insertDeviceState(
   deviceId: number,
   state: {
-    batterySoc: number
-    batteryWatts: number
-    acInputWatts: number
-    solarInputWatts: number
-    acOutputWatts: number
-    dcOutputWatts: number
-    temperature: number
+    // null = the quota did not carry the value; never store a made-up 0
+    batterySoc: number | null
+    batteryWatts: number | null
+    acInputWatts: number | null
+    solarInputWatts: number | null
+    acOutputWatts: number | null
+    dcOutputWatts: number | null
+    temperature: number | null
     rawData?: string | null
     // New fields for detailed charts
     bmsMasterVol?: number | null
@@ -365,6 +367,8 @@ export interface LastKnownErrors {
   emsIsNormal: boolean;
   bmsSlave1ErrCode?: number;
   bmsSlave2ErrCode?: number;
+  bmsFault?: number;
+  bmsWarningState?: number;
   timestamp: string;
 }
 
@@ -389,6 +393,8 @@ export function getLastKnownErrors(deviceId: number): LastKnownErrors | null {
     emsIsNormal: (rawData["ems.emsIsNormalFlag"] ?? 1) === 1,
     bmsSlave1ErrCode: rawData["bmsSlave1.errCode"],
     bmsSlave2ErrCode: rawData["bmsSlave2.errCode"],
+    bmsFault: rawData["bmsMaster.bmsFault"],
+    bmsWarningState: rawData["ems.bmsWarningState"],
     timestamp: state.timestamp,
   };
 }
@@ -396,13 +402,14 @@ export function getLastKnownErrors(deviceId: number): LastKnownErrors | null {
 // Historical data for charts
 export interface HistoryDataPoint {
   timestamp: string
-  batterySoc: number
-  batteryWatts: number
-  acInputWatts: number
-  solarInputWatts: number
-  acOutputWatts: number
-  dcOutputWatts: number
-  temperature: number
+  // null = no valid reading in this sample/bucket
+  batterySoc: number | null
+  batteryWatts: number | null
+  acInputWatts: number | null
+  solarInputWatts: number | null
+  acOutputWatts: number | null
+  dcOutputWatts: number | null
+  temperature: number | null
   // New fields for detailed charts
   bmsMasterVol: number | null
   extraBattery1Soc: number | null
@@ -429,6 +436,39 @@ function toSqliteTimestamp(isoString: string): string {
   return isoString.replace('T', ' ').replace(/\.\d{3}Z$/, '').replace('Z', '')
 }
 
+/**
+ * Rows written before the null-aware sampler stored a partial quota as all zeros
+ * (battery_soc = 0 included). A running DELTA Pro never reports 0% SOC, so such a
+ * row is treated as "no reading" for every metric instead of a dip to zero.
+ */
+function sampleValue(column: string): string {
+  return `CASE WHEN battery_soc = 0 THEN NULL ELSE ${column} END`
+}
+
+// Column expressions shared by every history read; `agg` wraps them for bucketed reads.
+function historyColumns(agg: (expr: string, decimals?: number) => string): string {
+  return [
+    `${agg(sampleValue('battery_soc'))} as batterySoc`,
+    `${agg(sampleValue('battery_watts'))} as batteryWatts`,
+    `${agg(sampleValue('ac_input_watts'))} as acInputWatts`,
+    `${agg(sampleValue('solar_input_watts'))} as solarInputWatts`,
+    `${agg(sampleValue('ac_output_watts'))} as acOutputWatts`,
+    `${agg(sampleValue('dc_output_watts'))} as dcOutputWatts`,
+    `${agg(sampleValue('NULLIF(temperature, 0)'), 1)} as temperature`,
+    `${agg('NULLIF(bms_master_vol, 0)')} as bmsMasterVol`,
+    `${agg('NULLIF(extra_battery1_soc, 0)')} as extraBattery1Soc`,
+    `${agg('extra_battery1_temp', 1)} as extraBattery1Temp`,
+    `${agg('NULLIF(extra_battery1_vol, 0)')} as extraBattery1Vol`,
+    `${agg('NULLIF(extra_battery2_soc, 0)')} as extraBattery2Soc`,
+    `${agg('extra_battery2_temp', 1)} as extraBattery2Temp`,
+    `${agg('NULLIF(extra_battery2_vol, 0)')} as extraBattery2Vol`,
+  ].join(',\n        ')
+}
+
+const rawColumn = (expr: string) => expr
+const avgColumn = (expr: string, decimals = 0) =>
+  decimals > 0 ? `ROUND(AVG(${expr}), ${decimals})` : `ROUND(AVG(${expr}))`
+
 export function getDeviceHistory(options: {
   deviceId: number
   from: string
@@ -443,143 +483,51 @@ export function getDeviceHistory(options: {
 
   // For 'none' aggregation, return raw data
   if (aggregation === 'none') {
-    const rows = db.prepare(`
+    return db.prepare(`
       SELECT
         timestamp,
-        battery_soc as batterySoc,
-        battery_watts as batteryWatts,
-        ac_input_watts as acInputWatts,
-        solar_input_watts as solarInputWatts,
-        ac_output_watts as acOutputWatts,
-        dc_output_watts as dcOutputWatts,
-        temperature,
-        bms_master_vol as bmsMasterVol,
-        extra_battery1_soc as extraBattery1Soc,
-        extra_battery1_temp as extraBattery1Temp,
-        extra_battery1_vol as extraBattery1Vol,
-        extra_battery2_soc as extraBattery2Soc,
-        extra_battery2_temp as extraBattery2Temp,
-        extra_battery2_vol as extraBattery2Vol
+        ${historyColumns(rawColumn)}
       FROM device_states
       WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
       ORDER BY timestamp ASC
       LIMIT ${HISTORY_ROW_LIMIT}
     `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
-    return rows
   }
 
-  // Determine the strftime format based on aggregation level
-  let groupFormat: string
+  // Bucket key expression for each aggregation level
+  let bucket: string
   switch (aggregation) {
-    case '1min':
-      groupFormat = '%Y-%m-%dT%H:%M:00'
-      break
     case '5min':
-      // Round to 5-minute intervals
-      groupFormat = '%Y-%m-%dT%H:'
+    case '15min': {
+      const interval = aggregation === '5min' ? 5 : 15
+      bucket = `strftime('%Y-%m-%dT%H:', timestamp) ||
+          printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / ${interval}) * ${interval}) ||
+          ':00'`
       break
-    case '15min':
-      groupFormat = '%Y-%m-%dT%H:'
-      break
+    }
     case '1hour':
-      groupFormat = '%Y-%m-%dT%H:00:00'
+      bucket = `strftime('%Y-%m-%dT%H:00:00', timestamp)`
       break
     case '6hour':
-      groupFormat = '%Y-%m-%dT'
-      break
-    default:
-      groupFormat = '%Y-%m-%dT%H:%M:00'
-  }
-
-  // For 5min and 15min, we need special handling
-  if (aggregation === '5min' || aggregation === '15min') {
-    const interval = aggregation === '5min' ? 5 : 15
-    const rows = db.prepare(`
-      SELECT
-        strftime('%Y-%m-%dT%H:', timestamp) ||
-          printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / ${interval}) * ${interval}) ||
-          ':00' as timestamp,
-        ROUND(AVG(battery_soc)) as batterySoc,
-        ROUND(AVG(battery_watts)) as batteryWatts,
-        ROUND(AVG(ac_input_watts)) as acInputWatts,
-        ROUND(AVG(solar_input_watts)) as solarInputWatts,
-        ROUND(AVG(ac_output_watts)) as acOutputWatts,
-        ROUND(AVG(dc_output_watts)) as dcOutputWatts,
-        ROUND(AVG(temperature), 1) as temperature,
-        ROUND(AVG(bms_master_vol)) as bmsMasterVol,
-        ROUND(AVG(extra_battery1_soc)) as extraBattery1Soc,
-        ROUND(AVG(extra_battery1_temp), 1) as extraBattery1Temp,
-        ROUND(AVG(extra_battery1_vol)) as extraBattery1Vol,
-        ROUND(AVG(extra_battery2_soc)) as extraBattery2Soc,
-        ROUND(AVG(extra_battery2_temp), 1) as extraBattery2Temp,
-        ROUND(AVG(extra_battery2_vol)) as extraBattery2Vol
-      FROM device_states
-      WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
-      GROUP BY strftime('%Y-%m-%dT%H:', timestamp) ||
-        printf('%02d', (CAST(strftime('%M', timestamp) AS INTEGER) / ${interval}) * ${interval})
-      ORDER BY timestamp ASC
-      LIMIT ${HISTORY_ROW_LIMIT}
-    `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
-    return rows
-  }
-
-  // For 6hour aggregation
-  if (aggregation === '6hour') {
-    const rows = db.prepare(`
-      SELECT
-        strftime('%Y-%m-%dT', timestamp) ||
+      bucket = `strftime('%Y-%m-%dT', timestamp) ||
           printf('%02d', (CAST(strftime('%H', timestamp) AS INTEGER) / 6) * 6) ||
-          ':00:00' as timestamp,
-        ROUND(AVG(battery_soc)) as batterySoc,
-        ROUND(AVG(battery_watts)) as batteryWatts,
-        ROUND(AVG(ac_input_watts)) as acInputWatts,
-        ROUND(AVG(solar_input_watts)) as solarInputWatts,
-        ROUND(AVG(ac_output_watts)) as acOutputWatts,
-        ROUND(AVG(dc_output_watts)) as dcOutputWatts,
-        ROUND(AVG(temperature), 1) as temperature,
-        ROUND(AVG(bms_master_vol)) as bmsMasterVol,
-        ROUND(AVG(extra_battery1_soc)) as extraBattery1Soc,
-        ROUND(AVG(extra_battery1_temp), 1) as extraBattery1Temp,
-        ROUND(AVG(extra_battery1_vol)) as extraBattery1Vol,
-        ROUND(AVG(extra_battery2_soc)) as extraBattery2Soc,
-        ROUND(AVG(extra_battery2_temp), 1) as extraBattery2Temp,
-        ROUND(AVG(extra_battery2_vol)) as extraBattery2Vol
-      FROM device_states
-      WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
-      GROUP BY strftime('%Y-%m-%dT', timestamp) ||
-        printf('%02d', (CAST(strftime('%H', timestamp) AS INTEGER) / 6) * 6)
-      ORDER BY timestamp ASC
-      LIMIT ${HISTORY_ROW_LIMIT}
-    `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
-    return rows
+          ':00:00'`
+      break
+    case '1min':
+    default:
+      bucket = `strftime('%Y-%m-%dT%H:%M:00', timestamp)`
   }
 
-  // Standard aggregation (1min, 1hour)
-  const rows = db.prepare(`
+  return db.prepare(`
     SELECT
-      strftime('${groupFormat}', timestamp) as timestamp,
-      ROUND(AVG(battery_soc)) as batterySoc,
-      ROUND(AVG(battery_watts)) as batteryWatts,
-      ROUND(AVG(ac_input_watts)) as acInputWatts,
-      ROUND(AVG(solar_input_watts)) as solarInputWatts,
-      ROUND(AVG(ac_output_watts)) as acOutputWatts,
-      ROUND(AVG(dc_output_watts)) as dcOutputWatts,
-      ROUND(AVG(temperature), 1) as temperature,
-      ROUND(AVG(bms_master_vol)) as bmsMasterVol,
-      ROUND(AVG(extra_battery1_soc)) as extraBattery1Soc,
-      ROUND(AVG(extra_battery1_temp), 1) as extraBattery1Temp,
-      ROUND(AVG(extra_battery1_vol)) as extraBattery1Vol,
-      ROUND(AVG(extra_battery2_soc)) as extraBattery2Soc,
-      ROUND(AVG(extra_battery2_temp), 1) as extraBattery2Temp,
-      ROUND(AVG(extra_battery2_vol)) as extraBattery2Vol
+      ${bucket} as timestamp,
+      ${historyColumns(avgColumn)}
     FROM device_states
     WHERE device_id = ? AND timestamp >= ? AND timestamp <= ?
-    GROUP BY strftime('${groupFormat}', timestamp)
+    GROUP BY ${bucket}
     ORDER BY timestamp ASC
     LIMIT ${HISTORY_ROW_LIMIT}
   `).all(deviceId, sqliteFrom, sqliteTo) as HistoryDataPoint[]
-
-  return rows
 }
 
 // Log operations
@@ -665,9 +613,6 @@ export function getErrorHistory(deviceId: number, limit: number = 100): ErrorHis
     { type: 'extraBattery2', field: 'bmsSlave2.errCode' },
   ];
 
-  // BMS codes that indicate battery state, not errors
-  // 5 = discharged state, 23 = charged state
-  const BMS_STATE_CODES = new Set([5, 23]);
 
   for (const state of states) {
     const data = parseRawData(state) as Record<string, number | undefined> | null;
@@ -676,8 +621,8 @@ export function getErrorHistory(deviceId: number, limit: number = 100): ErrorHis
     for (const { type, field } of errorFields) {
       const code = data[field];
       if (code && code !== 0) {
-        // Skip BMS state codes (not actual errors)
-        if (type === 'bms' && BMS_STATE_CODES.has(code)) continue;
+        // Skip status codes (fully charged, charge limit reached, ...): not errors
+        if (isStatusCode(type, code)) continue;
 
         // Group by type-code-minute to avoid duplicates
         const key = `${type}-${code}-${state.timestamp.substring(0, 16)}`;

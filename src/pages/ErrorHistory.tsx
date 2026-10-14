@@ -13,7 +13,8 @@ import { useDeviceStore } from '@/stores/deviceStore'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
-import { getErrorInfo } from '@/utils/errorCodes'
+import { getErrorInfo, isRealError } from '@/utils/errorCodes'
+import { parseServerTimestamp } from '@/components/charts'
 import type { ErrorHistoryEntry, ErrorType } from '@/types/device'
 
 // Map error types to display names
@@ -78,11 +79,8 @@ export default function ErrorHistory() {
     fetchErrors()
   }, [serialNumber])
 
-  // Status codes to hide (charging status, not actual errors)
-  const HIDDEN_STATUS_CODES = [5, 6, 23]
-
-  // Filter out hidden status codes first, then apply type filter
-  const visibleErrors = errors.filter((e) => !HIDDEN_STATUS_CODES.includes(e.errorCode))
+  // Status codes (fully charged, charged to limit, DC status flag) are not errors
+  const visibleErrors = errors.filter((e) => isRealError(ERROR_TYPE_TO_TOOLTIP[e.errorType], e.errorCode))
 
   const filteredErrors = filterType === 'all'
     ? visibleErrors
@@ -109,21 +107,21 @@ export default function ErrorHistory() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 sm:gap-4">
         <Link
           to={`/device/${serialNumber}`}
           className="inline-flex items-center justify-center w-10 h-10 rounded-lg border hover:bg-accent"
         >
           <ArrowLeft className="w-5 h-5" />
         </Link>
-        <div className="flex-1">
-          <h2 className="text-2xl font-bold tracking-tight">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-lg sm:text-2xl font-bold tracking-tight">
             Event History: {device.name || device.serialNumber}
           </h2>
-          <p className="text-muted-foreground">
-            {device.deviceType} • Errors and status events
+          <p className="text-sm text-muted-foreground">
+            {device.deviceType} • Errors and warnings (status messages like "fully charged" are hidden)
           </p>
         </div>
       </div>
@@ -191,7 +189,35 @@ export default function ErrorHistory() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Phones: one card per event */}
+          <ul className="sm:hidden divide-y">
+            {filteredErrors.map((err, index) => {
+              const tooltipType = ERROR_TYPE_TO_TOOLTIP[err.errorType]
+              const errorInfo = getErrorInfo(tooltipType, err.errorCode)
+              return (
+                <li key={`${err.timestamp}-${err.errorType}-${err.errorCode}-${index}`} className="px-3 py-2.5 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium', ERROR_TYPE_COLORS[err.errorType])}>
+                      {ERROR_TYPE_LABELS[err.errorType]} #{err.errorCode}
+                    </span>
+                    <span className="text-[11px] font-mono text-muted-foreground">
+                      {new Date(parseServerTimestamp(err.timestamp)).toLocaleString()}
+                    </span>
+                  </div>
+                  <ErrorTooltip errorCode={err.errorCode} errorType={tooltipType}>
+                    <span className="flex items-center gap-1.5 text-sm">
+                      {errorInfo.severity === 'error'
+                        ? <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                        : <Info className="w-4 h-4 text-yellow-500 flex-shrink-0" />}
+                      {errorInfo.title}
+                    </span>
+                  </ErrorTooltip>
+                </li>
+              )
+            })}
+          </ul>
+          <div className="hidden sm:block overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b bg-muted/30">
@@ -232,7 +258,7 @@ export default function ErrorHistory() {
                           ) : (
                             <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
                           )}
-                          {new Date(err.timestamp).toLocaleString()}
+                          {new Date(parseServerTimestamp(err.timestamp)).toLocaleString()}
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -266,6 +292,7 @@ export default function ErrorHistory() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 

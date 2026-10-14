@@ -23,6 +23,7 @@ import {
 import { mqttService } from "./services/mqttService.js";
 import { ecoflowApi } from "./services/ecoflowApi.js";
 import { getDeviceProfile } from "./services/deviceProfiles.js";
+import { buildStateSample, isUsefulSample } from "./services/stateSample.js";
 import { processDeviceAutomation, buildDeviceMetrics } from "./services/automationEngine.js";
 import devicesRouter from "./routes/devices.js";
 import logsRouter from "./routes/logs.js";
@@ -142,20 +143,16 @@ mqttService.on("message", (message) => {
     data: message,
   });
 
-  // Save to database
+  // Save to database. MQTT pushes only the keys that changed (usually wrapped in
+  // `params`), so a message without SOC/power must not become a row of zeros.
   const device = getDeviceBySn(message.sn) as { id: number } | undefined;
   if (device && message.data) {
-    const data = message.data as Record<string, number>;
-    insertDeviceState(device.id, {
-      batterySoc: data.soc || 0,
-      batteryWatts: (data.wattsInSum || 0) - (data.wattsOutSum || 0),
-      acInputWatts: data.acInWatts || 0,
-      solarInputWatts: data.pvInWatts || 0,
-      acOutputWatts: data.acOutWatts || 0,
-      dcOutputWatts: data.dcOutWatts || 0,
-      temperature: data.temp || 0,
-      rawData: JSON.stringify(message.data),
-    });
+    const raw = message.data as Record<string, unknown>;
+    const params = (raw.params && typeof raw.params === "object" ? raw.params : raw) as Record<string, unknown>;
+    const sample = buildStateSample(params);
+    if (sample.batterySoc !== null) {
+      insertDeviceState(device.id, { ...sample, rawData: JSON.stringify(params) });
+    }
   }
 
   clients.forEach((client) => {
@@ -236,7 +233,10 @@ server.listen(PORT, async () => {
           try {
             const quota = await ecoflowApi.getDeviceQuota(device.sn);
             const q = quota as Record<string, unknown>;
-            const profile = getDeviceProfile(device.productName);
+            // Passing the quota also rejects partial payloads (no bmsMaster.soc /
+            // inv.outputWatts): those were stored as SOC 0 and drew false dips on the
+            // battery chart, and could trip SOC-based automation rules.
+            const profile = getDeviceProfile(device.productName, q);
             // Do not record invented portable-power-station metrics or run power
             // automation for products that have no verified profile yet.
             if (profile.id === "unclassified-read-only") continue;
@@ -248,25 +248,12 @@ server.listen(PORT, async () => {
               true,
             );
 
-            insertDeviceState(deviceId, {
-              batterySoc:
-                (q["pd.soc"] as number) || (q["bmsMaster.soc"] as number) || 0,
-              batteryWatts:
-                ((q["pd.wattsInSum"] as number) || 0) -
-                ((q["pd.wattsOutSum"] as number) || 0),
-              acInputWatts: (q["inv.inputWatts"] as number) || 0,
-              solarInputWatts: (q["mppt.inWatts"] as number) || 0,
-              acOutputWatts: (q["inv.outputWatts"] as number) || 0,
-              dcOutputWatts:
-                (q["mppt.outWatts"] as number) ||
-                (q["pd.carWatts"] as number) ||
-                0,
-              temperature:
-                (q["inv.outTemp"] as number) ||
-                (q["bmsMaster.temp"] as number) ||
-                0,
-              rawData: JSON.stringify(quota),
-            });
+            // Same sample builder as the /devices route, so whichever path wins the
+            // 10 s slot writes voltage and extra-battery columns too.
+            const sample = buildStateSample(q);
+            if (isUsefulSample(sample)) {
+              insertDeviceState(deviceId, { ...sample, rawData: JSON.stringify(quota) });
+            }
 
             // Process automation rules for this device
             try {

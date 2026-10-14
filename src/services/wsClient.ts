@@ -1,4 +1,5 @@
 import { useDeviceStore } from '@/stores/deviceStore'
+import type { DeviceState } from '@/types/device'
 
 type MessageHandler = (data: unknown) => void
 
@@ -10,7 +11,8 @@ class WebSocketClient {
   private handlers: Map<string, Set<MessageHandler>> = new Map()
 
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    // Also skip while a socket is still connecting: several components share this client
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return
     }
 
@@ -68,21 +70,41 @@ class WebSocketClient {
   private handleDeviceUpdate(data: unknown): void {
     const update = data as {
       sn: string
-      data: Record<string, number>
+      data: Record<string, unknown>
     }
 
     if (!update.sn || !update.data) return
 
-    const deviceStore = useDeviceStore.getState()
+    // MQTT pushes only the keys that changed (usually inside `params`); apply just
+    // those, so a partial message never resets SOC or power to 0
+    const raw = (update.data.params ?? update.data) as Record<string, unknown>
+    const num = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = raw[key]
+        if (typeof value === 'number' && Number.isFinite(value)) return value
+      }
+      return undefined
+    }
+    const soc = num('pd.soc', 'bmsMaster.soc', 'soc')
+    const wattsIn = num('pd.wattsInSum', 'wattsInSum')
+    const wattsOut = num('pd.wattsOutSum', 'wattsOutSum')
+    const fields: Partial<DeviceState> = {
+      batterySoc: soc !== undefined && soc > 0 ? soc : undefined,
+      batteryWatts: wattsIn !== undefined && wattsOut !== undefined ? wattsIn - wattsOut : undefined,
+      acInputWatts: num('inv.inputWatts', 'acInWatts'),
+      solarInputWatts: num('mppt.inWatts', 'pvInWatts'),
+      acOutputWatts: num('inv.outputWatts', 'acOutWatts'),
+      dcOutputWatts: num('mppt.outWatts', 'dcOutWatts'),
+      temperature: num('inv.outTemp', 'bmsMaster.temp', 'temp'),
+    }
+    const changed = Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined)
+    ) as Partial<DeviceState>
+    if (Object.keys(changed).length === 0) return
+
     // Use updateDeviceStateFromServer to respect pending commands
-    deviceStore.updateDeviceStateFromServer(update.sn, {
-      batterySoc: update.data.soc || 0,
-      batteryWatts: (update.data.wattsInSum || 0) - (update.data.wattsOutSum || 0),
-      acInputWatts: update.data.acInWatts || 0,
-      solarInputWatts: update.data.pvInWatts || 0,
-      acOutputWatts: update.data.acOutWatts || 0,
-      dcOutputWatts: update.data.dcOutWatts || 0,
-      temperature: update.data.temp || 0,
+    useDeviceStore.getState().updateDeviceStateFromServer(update.sn, {
+      ...changed,
       timestamp: new Date().toISOString(),
     })
   }

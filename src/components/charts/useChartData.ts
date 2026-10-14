@@ -1,92 +1,152 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { api } from '@/services/api'
 import type { ChartPeriod, DateRange, HistoryDataPoint } from '@/types/device'
 
 interface UseChartDataResult {
   data: HistoryDataPoint[]
   isLoading: boolean
+  isFetching: boolean
   error: string | null
+  /** Epoch ms of the last successful fetch (0 before the first one) */
+  updatedAt: number
   refetch: () => void
 }
 
-// Get expected interval between data points in milliseconds based on period
-function getExpectedIntervalMs(period: ChartPeriod): number {
+type MetricKey = Exclude<keyof HistoryDataPoint, 'timestamp'>
+
+const METRIC_KEYS: MetricKey[] = [
+  'batterySoc', 'batteryWatts', 'acInputWatts', 'solarInputWatts', 'acOutputWatts',
+  'dcOutputWatts', 'temperature', 'bmsMasterVol', 'extraBattery1Soc', 'extraBattery1Temp',
+  'extraBattery1Vol', 'extraBattery2Soc', 'extraBattery2Temp', 'extraBattery2Vol',
+]
+const SOC_KEYS: MetricKey[] = ['batterySoc', 'extraBattery1Soc', 'extraBattery2Soc']
+
+/**
+ * How often an open chart re-reads history. The backend stores one sample per
+ * device every 10 s, so short windows refresh often and long ones (where a new
+ * bucket appears every 5-15 min) refresh rarely.
+ */
+function getRefetchIntervalMs(period: ChartPeriod, customRange?: DateRange | null): number | false {
   switch (period) {
     case '10m':
-      return 10 * 1000 // 10 seconds
     case '1h':
-      return 30 * 1000 // 30 seconds
+      return 10_000
     case '24h':
-      return 60 * 1000 // 1 minute
+      return 30_000
     case '7d':
-      return 5 * 60 * 1000 // 5 minutes
     case '30d':
-      return 15 * 60 * 1000 // 15 minutes
+      return 60_000
     case 'custom':
+      // A custom range that ends in the past never changes
+      if (!customRange) return false
+      return Date.now() - new Date(customRange.to).getTime() < 5 * 60_000 ? 60_000 : false
     default:
-      return 60 * 1000 // 1 minute default
+      return false
   }
 }
 
-// Create an empty data point with null values
-function createEmptyDataPoint(timestamp: string): HistoryDataPoint {
-  return {
-    timestamp,
-    batterySoc: null,
-    batteryWatts: null,
-    acInputWatts: null,
-    solarInputWatts: null,
-    acOutputWatts: null,
-    dcOutputWatts: null,
-    temperature: null,
-    bmsMasterVol: null,
-    extraBattery1Soc: null,
-    extraBattery1Temp: null,
-    extraBattery1Vol: null,
-    extraBattery2Soc: null,
-    extraBattery2Temp: null,
-    extraBattery2Vol: null,
+/**
+ * Distance between points after which the line is broken instead of drawn across.
+ * Raw samples nominally come every 10 s but the two writers (background collector
+ * and /devices route) share one slot, so 20-30 s spacing is normal, not a gap.
+ */
+function getGapThresholdMs(aggregation: string): number {
+  switch (aggregation) {
+    case 'none':
+      return 2 * 60_000
+    case '1min':
+      return 5 * 60_000
+    case '5min':
+      return 20 * 60_000
+    case '15min':
+      return 60 * 60_000
+    case '1hour':
+      return 3 * 60 * 60_000
+    case '6hour':
+      return 18 * 60 * 60_000
+    default:
+      return 5 * 60_000
   }
 }
 
-// Fill in gaps in the data with null values
-function fillDataGaps(
-  dataPoints: HistoryDataPoint[],
-  period: ChartPeriod
-): HistoryDataPoint[] {
-  if (dataPoints.length < 2) {
-    return dataPoints
-  }
+/**
+ * SQLite returns UTC timestamps without a zone ("2026-01-01 10:00:00" or
+ * "2026-01-01T10:00:00"). `new Date()` reads those as *local* time, which shifted
+ * every chart by the browser's UTC offset (3 h in Kyiv) and made the newest data
+ * look hours old. Mark them as UTC explicitly.
+ */
+export function parseServerTimestamp(timestamp: string): number {
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(timestamp)) return new Date(timestamp).getTime()
+  return new Date(`${timestamp.replace(' ', 'T')}Z`).getTime()
+}
 
-  const intervalMs = getExpectedIntervalMs(period)
-  // Allow for 50% tolerance before considering it a gap
-  const gapThresholdMs = intervalMs * 1.5
+function createEmptyDataPoint(timeMs: number): HistoryDataPoint {
+  const point = { timestamp: new Date(timeMs).toISOString() } as HistoryDataPoint
+  for (const key of METRIC_KEYS) point[key] = null
+  return point
+}
 
-  const result: HistoryDataPoint[] = []
-
-  for (let i = 0; i < dataPoints.length; i++) {
-    const currentPoint = dataPoints[i]
-    result.push(currentPoint)
-
-    if (i < dataPoints.length - 1) {
-      const nextPoint = dataPoints[i + 1]
-      const currentTime = new Date(currentPoint.timestamp).getTime()
-      const nextTime = new Date(nextPoint.timestamp).getTime()
-      const timeDiff = nextTime - currentTime
-
-      // If there's a significant gap, insert null points
-      if (timeDiff > gapThresholdMs) {
-        // Add one null point right after current (to break the line)
-        const gapStartTime = currentTime + intervalMs
-        result.push(createEmptyDataPoint(new Date(gapStartTime).toISOString()))
-
-        // Add one null point right before next (to resume the line)
-        const gapEndTime = nextTime - intervalMs
-        if (gapEndTime > gapStartTime) {
-          result.push(createEmptyDataPoint(new Date(gapEndTime).toISOString()))
-        }
+/**
+ * Removes single-sample SOC glitches (e.g. 80 → 3 → 80) that are physically
+ * impossible: SOC cannot jump that far and immediately return. Real drops persist
+ * across neighbouring samples and are kept.
+ */
+function removeSocSpikes(points: HistoryDataPoint[]): void {
+  const MAX_JUMP = 15
+  for (const key of SOC_KEYS) {
+    for (let i = 1; i < points.length - 1; i++) {
+      const value = points[i][key]
+      if (value === null) continue
+      let prev: number | null = null
+      for (let j = i - 1; j >= 0 && prev === null; j--) prev = points[j][key]
+      let next: number | null = null
+      for (let j = i + 1; j < points.length && next === null; j++) next = points[j][key]
+      if (prev === null || next === null) continue
+      if (Math.abs(prev - next) <= MAX_JUMP / 3 && Math.abs(value - prev) > MAX_JUMP && Math.abs(value - next) > MAX_JUMP) {
+        points[i][key] = null
       }
     }
+  }
+}
+
+/**
+ * Within a continuous stretch a metric can be missing from one sample (partial
+ * quota). Carry the previous reading forward so lines don't flicker; across a real
+ * gap insert empty points so the line breaks honestly.
+ */
+export function prepareChartData(rawPoints: HistoryDataPoint[], aggregation: string): HistoryDataPoint[] {
+  const points = rawPoints.map((p) => ({
+    ...p,
+    timestamp: new Date(parseServerTimestamp(p.timestamp)).toISOString(),
+  }))
+  removeSocSpikes(points)
+
+  const gapMs = getGapThresholdMs(aggregation)
+  const result: HistoryDataPoint[] = []
+  const last: Partial<Record<MetricKey, { value: number; at: number }>> = {}
+
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i]
+    const time = new Date(point.timestamp).getTime()
+
+    if (i > 0) {
+      const prevTime = new Date(points[i - 1].timestamp).getTime()
+      if (time - prevTime > gapMs) {
+        result.push(createEmptyDataPoint(prevTime + 1000))
+        result.push(createEmptyDataPoint(time - 1000))
+      }
+    }
+
+    for (const key of METRIC_KEYS) {
+      const value = point[key]
+      if (value !== null && value !== undefined) {
+        last[key] = { value, at: time }
+      } else {
+        const previous = last[key]
+        if (previous && time - previous.at <= gapMs) point[key] = previous.value
+      }
+    }
+    result.push(point)
   }
 
   return result
@@ -105,20 +165,23 @@ export function useChartData(
         period,
         period === 'custom' && customRange ? customRange : undefined
       )
-      // Fill in gaps in the data
-      return fillDataGaps(response.data.dataPoints, period)
+      return prepareChartData(response.data.dataPoints, response.data.aggregation)
     },
-    // Shorter stale time for real-time periods, longer for historical
-    staleTime: period === '10m' ? 30000 : period === 'custom' ? 60000 : 60000,
-    // Auto-refresh for 10m period only
-    refetchInterval: period === '10m' ? 30000 : false,
+    staleTime: 5_000,
+    refetchInterval: getRefetchIntervalMs(period, customRange),
+    // Pick up where we left off as soon as the tab is shown again
+    refetchOnWindowFocus: true,
+    // Keep the old chart on screen while a new period loads instead of a spinner flash
+    placeholderData: keepPreviousData,
     enabled: !!serialNumber && (period !== 'custom' || !!customRange),
   })
 
   return {
     data: query.data ?? [],
     isLoading: query.isLoading,
+    isFetching: query.isFetching,
     error: query.error instanceof Error ? query.error.message : query.error ? String(query.error) : null,
+    updatedAt: query.dataUpdatedAt,
     refetch: () => { query.refetch() },
   }
 }
