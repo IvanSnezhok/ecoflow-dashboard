@@ -5,6 +5,7 @@ import type {
   DateRange,
   HistoryResponse,
   ErrorHistoryResponse,
+  DeviceTechnicalInfo,
 } from "@/types/device";
 import type {
   AutomationRule,
@@ -106,6 +107,9 @@ export const api = {
         ...(customRange && { from: customRange.from, to: customRange.to }),
       },
     }),
+
+  getDeviceInfo: (serialNumber: string) =>
+    client.get<DeviceTechnicalInfo>(`/devices/${serialNumber}/info`),
 
   getDeviceErrors: (serialNumber: string, limit?: number) =>
     client.get<ErrorHistoryResponse>(`/devices/${serialNumber}/errors`, {

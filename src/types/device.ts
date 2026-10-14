@@ -141,3 +141,20 @@ export interface ErrorHistoryResponse {
   deviceSn: string;
   errors: ErrorHistoryEntry[];
 }
+
+// Technical details (GET /devices/:sn/info). The EcoFlow Open API does not report
+// MAC address or SSID for most models, so those are usually null.
+export interface DeviceTechnicalInfo {
+  serialNumber: string;
+  productName: string;
+  model: number | null;
+  firmware: { module: string; version: string }[];
+  batteryPacks: { label: string; serialNumber: string | null; firmware: string | null }[];
+  wifi: {
+    rssi: number | null; // dBm
+    ssid: string | null;
+    macAddress: string | null;
+    firmware: string | null;
+  };
+  recordedAt: string | null; // null = live data, otherwise last stored snapshot
+}
