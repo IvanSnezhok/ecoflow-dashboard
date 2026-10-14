@@ -208,6 +208,12 @@ class Bridge:
             except Exception as exc:
                 self.scanning = False
                 self.scanner_error = str(exc) or type(exc).__name__
+                if "AppArmor" in self.scanner_error:
+                    self.scanner_error = (
+                        "AppArmor blocks D-Bus for this container; add "
+                        "`security_opt: [apparmor:unconfined]` to ble-bridge in compose.yaml. "
+                        + self.scanner_error
+                    )
                 log.error("BLE scanner failed: %s; retrying in 15s", self.scanner_error)
                 await asyncio.sleep(15)
 

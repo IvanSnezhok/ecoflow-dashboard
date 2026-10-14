@@ -38,7 +38,7 @@ services:
 
   # Пряме з'єднання з EcoFlow по Bluetooth (BLE-донгл на цьому хості).
   # Говорить із bluetoothd хоста через системний D-Bus, тож не потребує
-  # network_mode: host чи privileged. Порт назовні не публікується: його бачить
+  # network_mode: host чи privileged (лише AppArmor-виняток нижче). Порт назовні не публікується: його бачить
   # лише контейнер панелі всередині мережі compose.
   ble-bridge:
     build:
@@ -49,6 +49,11 @@ services:
     env_file: .env
     environment:
       TZ: Europe/Kyiv
+    # Стандартний AppArmor-профіль Docker (docker-default) забороняє контейнеру
+    # слати повідомлення в системний D-Bus, а без нього bluetoothd недосяжний.
+    # Знімаємо обмеження лише для цього контейнера.
+    security_opt:
+      - apparmor:unconfined
     volumes:
       - /run/dbus:/run/dbus:ro
       # кеш user ID акаунта EcoFlow, щоб міст стартував і без інтернету
