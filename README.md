@@ -261,6 +261,11 @@ charts, automation and the outage logic work unchanged on BLE data.
 
 3. `docker compose up -d --build` (the in-panel updater builds both images).
 
+The bridge reaches `bluetoothd` through the host's system D-Bus. Docker's default
+AppArmor profile blocks that (`org.freedesktop.DBus.Error.AccessDenied ... An AppArmor
+policy prevents this sender ...`), so `compose.yaml` runs this one container with
+`security_opt: apparmor:unconfined`.
+
 **Modes.** `prefer` (default): BLE is the primary channel for data and commands, the
 cloud fills the fields BLE does not carry (extra-battery details) and takes over when
 BLE is down. `fallback`: the cloud stays primary and BLE is used only while the cloud
