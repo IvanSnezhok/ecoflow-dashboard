@@ -358,6 +358,21 @@ interface RawStateRow {
   timestamp: string;
 }
 
+// Latest stored quota snapshot. Raw payloads are only kept every few minutes, so
+// skip the rows written without one.
+export function getLatestRawData(deviceId: number): { data: Record<string, unknown>; timestamp: string } | null {
+  const state = db.prepare(`
+    SELECT ${rawPayloadColumns()}, timestamp FROM device_states
+    WHERE device_id = ? AND (raw_data_z IS NOT NULL${hasLegacyRawData() ? ' OR raw_data IS NOT NULL' : ''})
+    ORDER BY timestamp DESC
+    LIMIT 1
+  `).get(deviceId) as RawStateRow | undefined;
+
+  if (!state) return null;
+  const data = parseRawData(state);
+  return data ? { data, timestamp: state.timestamp } : null;
+}
+
 // Get last known error codes for a device (for offline state)
 export interface LastKnownErrors {
   bmsMasterErrCode: number;

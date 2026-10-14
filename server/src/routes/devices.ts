@@ -4,6 +4,7 @@ import { mqttService } from "../services/mqttService.js";
 import { getDeviceProfile } from "../services/deviceProfiles.js";
 import { buildStateSample, isUsefulSample } from "../services/stateSample.js";
 import { isRealErrorCode } from "../lib/errorClassification.js";
+import { extractTechnicalInfo } from "../services/deviceInfo.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -13,6 +14,7 @@ import {
   insertLog,
   getDeviceHistory,
   getLastKnownErrors,
+  getLatestRawData,
   getErrorHistory,
   type AggregationType,
 } from "../db/database.js";
@@ -379,6 +381,40 @@ router.get("/:sn", async (req: Request, res: Response) => {
       profileStatus: profile.status,
       capabilities: profile.capabilities,
     });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
+// Technical details: serial numbers, firmware versions, Wi-Fi. Offline devices
+// get the values from the last stored quota snapshot.
+router.get("/:sn/info", async (req: Request, res: Response) => {
+  try {
+    const { sn } = req.params;
+    const device = getDeviceBySn(sn) as
+      | { id: number; device_type: string; online: number }
+      | undefined;
+
+    if (!device) {
+      res.status(404).json({ error: "Device not found" });
+      return;
+    }
+
+    if (device.online) {
+      try {
+        const quota = await ecoflowApi.getDeviceQuota(sn);
+        if (quota && typeof quota === "object") {
+          res.json(extractTechnicalInfo(sn, device.device_type, quota as Record<string, unknown>));
+          return;
+        }
+      } catch (error) {
+        console.warn(`Live quota for ${sn} unavailable, using stored snapshot:`, error);
+      }
+    }
+
+    const stored = getLatestRawData(device.id);
+    res.json(extractTechnicalInfo(sn, device.device_type, stored?.data ?? {}, stored?.timestamp ?? null));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ error: message });
