@@ -15,7 +15,7 @@ import type {
   UpdateSlackSettingsDto,
   RuleTestResult,
 } from "@/types/automation";
-import type { ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
+import type { PowerDay, ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
 
 export interface VersionInfo {
   current: string;
@@ -153,6 +153,8 @@ export const api = {
   updateResilienceSettings: (settings: ResilienceSettings) =>
     client.put<{ success: boolean; data: ResilienceSettings }>('/resilience/settings', settings),
   getResilienceStatus: () => client.get<{ success: boolean; data: ResilienceStatus }>('/resilience/status'),
+  getResilienceTimeline: (days: number) =>
+    client.get<{ success: boolean; data: PowerDay[] }>('/resilience/timeline', { params: { days } }),
   refreshResilience: () => client.post<{ success: boolean; data: ResilienceStatus }>('/resilience/refresh'),
   getResilienceCatalog: () => client.get<{ success: boolean; data: YasnoRegion[] }>('/resilience/catalog'),
   getResilienceGroups: (regionId: number, dsoId: number) =>

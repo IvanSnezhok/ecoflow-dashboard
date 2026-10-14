@@ -3,11 +3,12 @@ import { AlertTriangle, BatteryCharging, CheckCircle2, Clock3, Gauge, Loader2, M
 import { api } from '@/services/api'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { cn } from '@/lib/utils'
-import type { LoadPeriod, ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
+import { formatMinutes, PowerTimeline } from '@/components/resilience/PowerTimeline'
+import type { AcAction, LoadPeriod, LoadSource, ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
 
 const defaults: ResilienceSettings = {
   enabled: false, autoAc: false, notifySlack: true, warningLeadMinutes: 60, recoveryDelayMinutes: 15,
-  minSoc: 25, reserveSoc: 15, batteryCapacityWh: 3600, inverterEfficiency: 0.85,
+  minSoc: 25, reserveSoc: 15, batteryCapacityWh: 3600, inverterEfficiency: 0.85, acOffMaxWatts: 50,
   loadProfile: [
     { start: '00:00', end: '07:00', watts: 180, label: 'Ніч' },
     { start: '07:00', end: '09:00', watts: 650, label: 'Ранок' },
@@ -24,6 +25,38 @@ const riskCopy: Record<ResilienceStatus['risk'], { label: string; color: string;
   active: { label: 'ВІДКЛЮЧЕННЯ', color: 'text-energy-red border-energy-red/40 bg-energy-red/5', note: 'Планове вікно активне' },
   emergency: { label: 'АВАРІЙНИЙ СТАН', color: 'text-energy-red border-energy-red/50 bg-energy-red/10', note: 'YASNO повідомляє про аварійні відключення' },
   stale: { label: 'ДАНІ ЗАСТАРІЛИ', color: 'text-muted-foreground border-border bg-muted/30', note: 'Автокерування призупинено до оновлення даних' },
+}
+
+const acActionCopy: Record<AcAction, { label: string; color: string }> = {
+  none: { label: 'без змін', color: 'text-muted-foreground' },
+  on: { label: 'AC увімкнено', color: 'text-energy-green' },
+  off: { label: 'AC вимкнено', color: 'text-muted-foreground' },
+  'waiting-load': { label: 'чекає, поки навантаження впаде', color: 'text-energy-yellow' },
+  'blocked-low-soc': { label: 'заблоковано: низький SOC', color: 'text-energy-red' },
+  failed: { label: 'помилка команди', color: 'text-energy-red' },
+}
+
+const loadSourceCopy: Record<LoadSource, string> = {
+  history: 'за історією споживання',
+  mixed: 'за історією + резервним профілем',
+  profile: 'за резервним профілем (історії ще мало)',
+  current: 'за поточним навантаженням',
+}
+
+function LoadHistoryBars({ slots, slotMinutes }: { slots: Array<number | null>; slotMinutes: number }) {
+  const max = Math.max(1, ...slots.map(value => value ?? 0))
+  const label = (index: number) => {
+    const start = index * slotMinutes
+    return `${String(Math.floor(start / 60)).padStart(2, '0')}:${String(start % 60).padStart(2, '0')}`
+  }
+  return <div>
+    <div className="flex items-end gap-px h-12" role="img" aria-label="Середнє навантаження за 30-хвилинними інтервалами">
+      {slots.map((value, index) => <div key={index} className="flex-1 h-full flex items-end" title={`${label(index)} · ${value === null ? 'немає даних' : `${value} Вт`}`}>
+        <div className={cn('w-full rounded-t-[2px]', value === null ? 'bg-muted' : 'bg-energy-blue')} style={{ height: value === null ? '2px' : `${Math.max(4, (value / max) * 100)}%` }} />
+      </div>)}
+    </div>
+    <div className="flex justify-between text-[9px] font-mono text-muted-foreground mt-0.5"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+  </div>
 }
 
 function fmt(value?: string) {
@@ -106,7 +139,10 @@ export default function Resilience() {
   }, [])
 
   const selectedRegion = useMemo(() => regions.find(region => region.id === settings.regionId), [regions, settings.regionId])
-  const risk = riskCopy[status.risk]
+  // The device seeing no grid outranks a schedule that says everything is fine.
+  const risk = status.grid?.state === 'off' && status.grid.unplanned
+    ? { label: 'ПОЗАПЛАНОВЕ ВІДКЛЮЧЕННЯ', color: riskCopy.emergency.color, note: 'EcoFlow не бачить мережі, хоча за графіком світло мало бути' }
+    : riskCopy[status.risk]
   const nextEvents = status.events.filter(event => new Date(event.end) > new Date()).slice(0, 6)
 
   const patch = <K extends keyof ResilienceSettings>(key: K, value: ResilienceSettings[K]) => setSettings(current => ({ ...current, [key]: value }))
@@ -161,7 +197,15 @@ export default function Resilience() {
       <div className="absolute right-0 top-0 text-[96px] leading-none font-black opacity-[0.04] select-none">50Hz</div>
       <div className="flex items-start justify-between gap-6 relative">
         <div><div className="flex items-center gap-2"><Zap className="w-5 h-5" /><span className="text-sm font-black tracking-[0.16em]">{risk.label}</span></div><p className="mt-2 text-xs text-foreground">{risk.note}</p><p className="mt-1 text-[10px] font-mono text-muted-foreground">Перевірено: {fmt(status.checkedAt)} {status.error ? `· ${status.error}` : ''}</p></div>
-        {status.nextEvent && <div className="text-right"><div className="text-[10px] font-mono uppercase text-muted-foreground">Наступне вікно</div><div className="mt-1 text-sm font-mono font-semibold">{fmt(status.nextEvent.start)}</div><div className="text-[10px] font-mono">до {fmt(status.nextEvent.end)}</div></div>}
+        <div className="flex gap-6 text-right">
+          {status.grid && status.grid.state !== 'unknown' && <div>
+            <div className="text-[10px] font-mono uppercase text-muted-foreground">Мережа зараз</div>
+            <div className={cn('mt-1 text-sm font-mono font-semibold', status.grid.state === 'on' ? 'text-energy-green' : 'text-energy-red')}>{status.grid.state === 'on' ? 'Світло є' : 'Світла немає'}</div>
+            <div className="text-[10px] font-mono text-foreground">з {fmt(status.grid.since)}</div>
+            {status.grid.state === 'off' && <div className="text-[10px] font-mono text-muted-foreground">EcoFlow {formatMinutes(status.grid.outageEcoflowMinutes ?? 0)} · {((status.grid.outageWh ?? 0) / 1000).toFixed(2)} кВт·год</div>}
+          </div>}
+          {status.nextEvent && <div><div className="text-[10px] font-mono uppercase text-muted-foreground">Наступне вікно</div><div className="mt-1 text-sm font-mono font-semibold">{fmt(status.nextEvent.start)}</div><div className="text-[10px] font-mono text-foreground">до {fmt(status.nextEvent.end)}</div></div>}
+        </div>
       </div>
     </section>
 
@@ -192,25 +236,30 @@ export default function Resilience() {
           </div>
           {addressHint && <div className={cn('mt-2 flex items-center gap-1.5 text-[10px] font-mono', houseId && settings.outageGroup ? 'text-energy-green' : 'text-muted-foreground')}>{houseId && settings.outageGroup && <CheckCircle2 className="w-3.5 h-3.5" />}{addressHint}</div>}
         </div>
-        <div className="grid sm:grid-cols-4 gap-3">
+        <div className="grid sm:grid-cols-5 gap-3">
           <Field label="Попередження, хв"><input className={inputClass} type="number" value={settings.warningLeadMinutes} onChange={e => patch('warningLeadMinutes', Number(e.target.value))} /></Field>
           <Field label="Затримка вимк., хв"><input className={inputClass} type="number" value={settings.recoveryDelayMinutes} onChange={e => patch('recoveryDelayMinutes', Number(e.target.value))} /></Field>
           <Field label="Мін. SOC, %"><input className={inputClass} type="number" value={settings.minSoc} onChange={e => patch('minSoc', Number(e.target.value))} /></Field>
           <Field label="Резерв SOC, %"><input className={inputClass} type="number" value={settings.reserveSoc} onChange={e => patch('reserveSoc', Number(e.target.value))} /></Field>
+          <Field label="Вимк. AC нижче, Вт"><input className={inputClass} type="number" value={settings.acOffMaxWatts} onChange={e => patch('acOffMaxWatts', Number(e.target.value))} /></Field>
         </div>
-        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.autoAc} onChange={e => patch('autoAc', e.target.checked)} /><span><span className="block text-xs font-medium">Дозволити автоматичне перемикання AC</span><span className="block mt-1 text-[10px] text-muted-foreground">AC вмикається перед плановим/імовірним вікном і при аварійному статусі. Вимикається лише якщо його ввімкнула ця автоматизація.</span></span></label>
-        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.notifySlack} onChange={e => patch('notifySlack', e.target.checked)} /><span><span className="block text-xs font-medium">Сповіщення у Slack</span><span className="block mt-1 text-[10px] text-muted-foreground">Попередження перед вікном, початок і кінець відключення, перемикання AC, низький заряд і застарілий графік. Потрібен увімкнений Slack у налаштуваннях автоматизацій.</span></span></label>
+        {status.acAction && <div className="text-[10px] font-mono text-muted-foreground">Останнє рішення автоматики: <span className={acActionCopy[status.acAction].color}>{acActionCopy[status.acAction].label}</span></div>}
+        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.autoAc} onChange={e => patch('autoAc', e.target.checked)} /><span><span className="block text-xs font-medium">Дозволити автоматичне перемикання AC</span><span className="block mt-1 text-[10px] text-muted-foreground">AC вмикається перед плановим/імовірним вікном, при аварійному статусі YASNO і завжди, коли EcoFlow бачить, що мережа зникла (навіть поза графіком). Вимикається лише якщо його ввімкнула ця автоматизація, і лише коли навантаження на розетках EcoFlow щонайменше 2 хв нижче порогу.</span></span></label>
+        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.notifySlack} onChange={e => patch('notifySlack', e.target.checked)} /><span><span className="block text-xs font-medium">Сповіщення у Slack</span><span className="block mt-1 text-[10px] text-muted-foreground">Попередження перед вікном, початок і кінець відключення, фактичне зникнення і повернення світла (з підсумком роботи EcoFlow), позапланові відключення, перемикання AC, низький заряд і застарілий графік. Потрібен увімкнений Slack у налаштуваннях автоматизацій.</span></span></label>
       </section>
 
       <section className="rounded-sm border bg-card p-4 space-y-4"><div className="flex items-center gap-2"><Gauge className="w-4 h-4 text-energy-blue" /><h2 className="text-xs font-semibold uppercase tracking-wider">Прогноз автономності</h2></div>
-        {status.forecast ? <><div><div className="text-3xl font-mono font-bold tabular-nums">{status.forecast.hoursRemaining === null ? '>336' : status.forecast.hoursRemaining}<span className="text-sm text-muted-foreground ml-1">год</span></div><div className="text-[10px] text-muted-foreground mt-1">до резервного SOC за профілем</div></div>
-          <div className="space-y-2 text-xs font-mono"><div className="flex justify-between"><span className="text-muted-foreground">Батареї</span><span>{status.forecast.batteryCount} × {settings.batteryCapacityWh / 1000} кВт·год</span></div><div className="flex justify-between"><span className="text-muted-foreground">Доступно AC</span><span>{(status.forecast.usableWh / 1000).toFixed(2)} кВт·год</span></div><div className="flex justify-between"><span className="text-muted-foreground">Середнє</span><span>{status.forecast.averageLoadWatts} Вт</span></div><div className="flex justify-between"><span className="text-muted-foreground">До</span><span>{fmt(status.forecast.depletionAt ?? undefined)}</span></div></div></> : <div className="text-xs text-muted-foreground">Прогноз з’явиться після наступного циклу опитування EcoFlow.</div>}
+        {status.forecast ? <><div><div className="text-3xl font-mono font-bold tabular-nums">{status.forecast.hoursRemaining === null ? '>336' : status.forecast.hoursRemaining}<span className="text-sm text-muted-foreground ml-1">год</span></div><div className="text-[10px] text-muted-foreground mt-1">до резервного SOC {loadSourceCopy[status.forecast.loadSource]}</div></div>
+          <div className="space-y-2 text-xs font-mono"><div className="flex justify-between"><span className="text-muted-foreground">Батареї</span><span>{status.forecast.batteryCount} × {settings.batteryCapacityWh / 1000} кВт·год</span></div><div className="flex justify-between"><span className="text-muted-foreground">Доступно AC</span><span>{(status.forecast.usableWh / 1000).toFixed(2)} кВт·год</span></div><div className="flex justify-between"><span className="text-muted-foreground">Середнє</span><span>{status.forecast.averageLoadWatts} Вт</span></div><div className="flex justify-between"><span className="text-muted-foreground">До</span><span>{fmt(status.forecast.depletionAt ?? undefined)}</span></div>{status.forecast.windowDemandWh !== undefined && <div className="flex justify-between"><span className="text-muted-foreground">{status.currentEvent ? 'Витрати до кінця вікна' : 'Витрати за наступне вікно'}</span><span className={cn(status.forecast.windowDemandWh > status.forecast.usableWh && 'text-energy-red')}>{(status.forecast.windowDemandWh / 1000).toFixed(2)} кВт·год</span></div>}</div>
+          {status.loadHistory && <div className="space-y-1"><div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Середнє навантаження · {status.loadHistory.days} дн історії</div><LoadHistoryBars slots={status.loadHistory.slots} slotMinutes={status.loadHistory.slotMinutes} /></div>}</> : <div className="text-xs text-muted-foreground">Прогноз з’явиться після наступного циклу опитування EcoFlow.</div>}
         <div className="grid grid-cols-2 gap-2"><Field label="Ємність однієї, Wh"><input className={inputClass} type="number" value={settings.batteryCapacityWh} onChange={e => patch('batteryCapacityWh', Number(e.target.value))} /></Field><Field label="ККД інвертора"><input className={inputClass} type="number" step="0.01" value={settings.inverterEfficiency} onChange={e => patch('inverterEfficiency', Number(e.target.value))} /></Field></div>
       </section>
     </div>
 
+    <PowerTimeline refreshKey={status.checkedAt} />
+
     <div className="grid lg:grid-cols-5 gap-4">
-      <section className="lg:col-span-3 rounded-sm border bg-card p-4"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><BatteryCharging className="w-4 h-4 text-energy-green" /><h2 className="text-xs font-semibold uppercase tracking-wider">Графік споживання</h2></div><button onClick={() => patch('loadProfile', [...settings.loadProfile, { start: '12:00', end: '13:00', watts: 300, label: 'Нове вікно' }])} className="text-[10px] font-mono flex items-center gap-1"><Plus className="w-3 h-3" />Додати</button></div>
+      <section className="lg:col-span-3 rounded-sm border bg-card p-4"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><BatteryCharging className="w-4 h-4 text-energy-green" /><div><h2 className="text-xs font-semibold uppercase tracking-wider">Резервний профіль споживання</h2><p className="text-[10px] text-muted-foreground">Прогноз бере навантаження з історії EcoFlow за 14 днів; ці вікна використовуються лише там, де історії ще немає.</p></div></div><button onClick={() => patch('loadProfile', [...settings.loadProfile, { start: '12:00', end: '13:00', watts: 300, label: 'Нове вікно' }])} className="text-[10px] font-mono flex items-center gap-1"><Plus className="w-3 h-3" />Додати</button></div>
         <div className="space-y-2">{settings.loadProfile.map((period, index) => <div key={index} className="grid grid-cols-[1fr_92px_92px_90px_28px] gap-2 items-center"><input className={inputClass} value={period.label ?? ''} onChange={e => updateLoad(index, { label: e.target.value })} placeholder="Назва" /><input className={inputClass} type="time" value={period.start} onChange={e => updateLoad(index, { start: e.target.value })} /><input className={inputClass} type="time" value={period.end} onChange={e => updateLoad(index, { end: e.target.value })} /><div className="relative"><input className={cn(inputClass, 'pr-7')} type="number" value={period.watts} onChange={e => updateLoad(index, { watts: Number(e.target.value) })} /><span className="absolute right-2 top-2.5 text-[10px] text-muted-foreground">W</span></div><button onClick={() => patch('loadProfile', settings.loadProfile.filter((_, i) => i !== index))}><Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-energy-red" /></button></div>)}</div>
       </section>
       <section className="lg:col-span-2 rounded-sm border bg-card p-4"><div className="flex items-center gap-2 mb-3"><Clock3 className="w-4 h-4 text-energy-yellow" /><h2 className="text-xs font-semibold uppercase tracking-wider">Найближчі вікна</h2></div><div className="space-y-2">{nextEvents.length ? nextEvents.map((event, index) => <div key={`${event.start}-${index}`} className="flex items-center gap-3 rounded-sm border p-2.5"><div className={cn('w-1 h-8 rounded-full', event.type === 'definite' ? 'bg-energy-red' : 'bg-energy-yellow')} /><div className="flex-1"><div className="text-xs font-mono">{fmt(event.start)} — {fmt(event.end).split(' ')[1]}</div><div className="text-[10px] text-muted-foreground uppercase">{event.type === 'definite' ? 'планове' : 'імовірне'} · {event.source}</div></div></div>) : <div className="py-8 text-center text-xs text-muted-foreground">Запланованих вікон немає</div>}</div></section>

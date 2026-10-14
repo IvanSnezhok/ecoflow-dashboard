@@ -8,6 +8,7 @@ import {
   resolveResilienceGroup,
   searchResilienceHouses,
   searchResilienceStreets,
+  getPowerTimeline,
   getSettings,
   getStatus,
 } from '../services/resilienceService.js'
@@ -35,11 +36,21 @@ const settingsSchema = z.object({
   reserveSoc: z.number().int().min(0).max(50),
   batteryCapacityWh: z.number().int().min(500).max(10000),
   inverterEfficiency: z.number().min(0.5).max(1),
+  acOffMaxWatts: z.number().int().min(0).max(1000).default(50),
   loadProfile: z.array(loadPeriodSchema).max(24),
 })
 
 resilienceRouter.get('/settings', (_req, res) => res.json({ success: true, data: getSettings() }))
 resilienceRouter.get('/status', (_req, res) => res.json({ success: true, data: getStatus() }))
+
+resilienceRouter.get('/timeline', (req, res) => {
+  const days = req.query.days === undefined ? 7 : Number(req.query.days)
+  if (!Number.isInteger(days) || days < 1 || days > 31) {
+    res.status(400).json({ success: false, error: 'days must be an integer between 1 and 31' }); return
+  }
+  try { res.json({ success: true, data: getPowerTimeline(days) }) }
+  catch (error) { res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) }) }
+})
 
 resilienceRouter.put('/settings', (req, res) => {
   const parsed = settingsSchema.safeParse(req.body)
@@ -66,6 +77,7 @@ resilienceRouter.put('/settings', (req, res) => {
     warning_lead_minutes: value.warningLeadMinutes, recovery_delay_minutes: value.recoveryDelayMinutes,
     min_soc: value.minSoc, reserve_soc: value.reserveSoc, battery_capacity_wh: value.batteryCapacityWh,
     inverter_efficiency: value.inverterEfficiency, load_profile: JSON.stringify(value.loadProfile),
+    ac_off_max_watts: value.acOffMaxWatts,
   })
   res.json({ success: true, data: getSettings() })
 })

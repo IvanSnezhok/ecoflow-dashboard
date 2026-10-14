@@ -240,19 +240,46 @@ Unknown EcoFlow products are intentionally read-only. Add a documented profile i
 The **Power reserve** page reads planned, probable and emergency outage states from
 YASNO's public web-service endpoints. Select the EcoFlow device and Kyiv distribution
 operator, then search for the street and house to resolve the outage group automatically
-(manual group selection remains available as a fallback). Define the daily load profile. The forecast uses
+(manual group selection remains available as a fallback). The forecast uses
 the current SOC of the DELTA Pro and every detected extra battery, the configured
 reserve SOC and inverter efficiency.
 
-AC automation has a separate opt-in switch. It turns AC on only inside the configured
-warning window (or during an active/emergency state), refuses to do so below the
-minimum SOC, and pauses commands when schedule data is stale. It turns AC off after
-the recovery delay only when this automation was the component that turned it on.
-YASNO schedules remain advisory and can change without notice.
+**Load forecast from history.** The expected load comes from the device's own
+history: the average AC + DC output per 30-minute Kyiv time slot over the last
+14 days, counting only samples where the AC output was actually feeding something
+(while AC is off the outputs read 0 W, which says nothing about outage consumption).
+A slot needs about ten minutes of samples to be trusted. The manual load profile is
+now only a fallback for slots without enough history, then the current load. The
+page shows the source used, the 48-slot average, and the expected consumption for the
+rest of the current outage window or the whole next one.
+
+AC automation has a separate opt-in switch. It turns AC on inside the configured
+warning window, during an active window or YASNO emergency shutdowns, and **whenever
+the device itself reports no mains on its AC input** (`inv.acInVol`), even outside the
+schedule and even while schedule data is stale. It refuses to do so below the minimum
+SOC and otherwise pauses commands while schedule data is stale. After the recovery
+delay it turns AC off only when this automation turned it on **and the AC output load
+has stayed below the threshold (50 W by default, "Вимк. AC нижче") for 2 minutes** —
+sockets that still feed something are never cut. YASNO schedules remain advisory and
+can change without notice.
+
+**Light / no-light timeline.** Grid presence is recorded per minute from the device
+(table `grid_minutes`, together with the energy delivered by its outputs and the time
+it ran on battery), and the YASNO schedule last seen for each day is kept in
+`outage_schedule_days` (planned schedule when published, otherwise the probable one).
+The page draws each day as two strips, schedule above and actual grid below, with
+totals per day and per period: hours with power although the schedule said outage
+("додатково зі світлом"), hours without power (and how many of them were outside the
+schedule), and how long the EcoFlow fed the sockets and how much energy it delivered.
+Recording starts once a device is selected; gaps (server or device offline) show as
+"no data". `GET /api/resilience/timeline?days=7` (1–31) returns the same data.
 
 When Slack is enabled under automation settings, the outage automation also posts
 alerts (on by default, switchable on the Power reserve page): a warning when a window
 enters the lead time, the start and scheduled end of an outage, emergency shutdowns,
-every AC switch it makes or fails to make, a low-SOC block, a forecast that the
-reserve will run out before the window ends, and stale YASNO data. A restart does not
+every AC switch it makes or fails to make, an AC switch-off held back by load on the
+sockets, the device losing and regaining grid (flagged when the loss is outside the
+schedule; the return carries the outage duration, EcoFlow run time and energy), a
+low-SOC block, a forecast that the reserve will run out before the window ends, and
+stale YASNO data. A restart does not
 re-announce a transition that already happened.
