@@ -28,7 +28,7 @@ const POWER_PANEL: Record<PowerChartMode, {
 }> = {
   input: {
     title: 'Charging (input)',
-    hint: 'Power flowing into the station: grid and solar, stacked.',
+    hint: 'Power flowing into the station from the grid and from solar.',
     keys: ['acInputWatts', 'solarInputWatts'],
     icon: <Plug className="w-4 h-4 text-energy-purple shrink-0" />,
     energyLabel: 'charged',
@@ -36,7 +36,7 @@ const POWER_PANEL: Record<PowerChartMode, {
   },
   output: {
     title: 'Consumption (output)',
-    hint: 'Power your loads draw from the station: AC sockets and DC/USB, stacked.',
+    hint: 'Power your loads draw from the station: AC sockets and DC/USB.',
     keys: ['acOutputWatts', 'dcOutputWatts'],
     icon: <Home className="w-4 h-4 text-energy-blue shrink-0" />,
     energyLabel: 'used',
