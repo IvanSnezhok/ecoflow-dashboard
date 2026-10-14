@@ -199,6 +199,15 @@ export default function DeviceDetail() {
             )}>
               {device.online ? "ONLINE" : "OFFLINE"}
             </span>
+            {/* Shown when the data arrives over Bluetooth, e.g. while Wi-Fi is down */}
+            {device.online && (device.dataSource === "ble" || device.dataSource === "cloud+ble") && (
+              <span
+                className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase bg-primary/10 text-primary"
+                title={device.cloudOnline ? "Live data over Bluetooth; cloud connected too" : "Cloud unreachable; live data over Bluetooth"}
+              >
+                {device.cloudOnline ? "BLE" : "BLE ONLY"}
+              </span>
+            )}
           </div>
           <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
             {device.deviceType} • {device.serialNumber}

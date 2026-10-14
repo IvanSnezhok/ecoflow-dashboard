@@ -17,6 +17,8 @@
     "test:codec": "npm run test:codec --prefix server",
     "test:sample": "npm run test:sample --prefix server",
     "test:info": "npm run test:info --prefix server",
+    "test:connection": "npm run test:connection --prefix server",
+    "test:ble": "npm run test:ble --prefix server",
     "test:smoke": "node scripts/smokeHistoryApi.mjs",
     "test:migrate": "npm run build:backend && node scripts/testMigrationRetry.mjs"
   },

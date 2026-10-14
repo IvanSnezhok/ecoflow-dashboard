@@ -15,6 +15,8 @@ services:
     environment:
       TZ: Europe/Kyiv
       NODE_ENV: production
+      # BLE-міст нижче; без нього панель працює лише через хмару
+      ECOFLOW_BLE_BRIDGE_URL: http://ble-bridge:8765
     ports:
       - "127.0.0.1:3001:3001"
     volumes:
@@ -33,3 +35,28 @@ services:
         max-file: "3"
     stop_grace_period: 20s
     mem_limit: 1g
+
+  # Пряме з'єднання з EcoFlow по Bluetooth (BLE-донгл на цьому хості).
+  # Говорить із bluetoothd хоста через системний D-Bus, тож не потребує
+  # network_mode: host чи privileged. Порт назовні не публікується: його бачить
+  # лише контейнер панелі всередині мережі compose.
+  ble-bridge:
+    build:
+      context: ./ble-bridge
+    image: ecoflow-ble-bridge:local
+    container_name: ecoflow-ble-bridge
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Europe/Kyiv
+    volumes:
+      - /run/dbus:/run/dbus:ro
+      # кеш user ID акаунта EcoFlow, щоб міст стартував і без інтернету
+      - ./server/data/ble:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 20s
+    mem_limit: 256m

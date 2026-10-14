@@ -1,0 +1,8 @@
+# eflib (rabits/ha-ef-ble) runtime dependencies, pinned to the versions tested here
+aiohttp==3.14.5
+bleak==3.0.2
+bleak-retry-connector==4.7.1
+bluetooth-adapters==2.4.0
+ecdsa==0.19.2
+protobuf==7.36.2
+pycryptodome==3.24.1

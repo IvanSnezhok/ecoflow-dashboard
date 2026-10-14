@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Cpu, Wifi, WifiOff } from 'lucide-react'
+import { Bluetooth, Cpu, Wifi, WifiOff } from 'lucide-react'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { parseServerTimestamp } from '@/components/charts'
+import type { BleStatus, ConnectionSummary, DataSource } from '@/types/device'
 
 interface DeviceInfoCardProps {
   serialNumber: string
@@ -41,14 +42,185 @@ function Row({ label, value, mono = true }: { label: string; value: ReactNode; m
   )
 }
 
+function formatDuration(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const mins = minutes % 60
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
+}
+
+const formatMoment = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+function ConnectionRows({ connection, now }: { connection: ConnectionSummary; now: number }) {
+  if (connection.online === null || !connection.since) {
+    return <Row label="Connection uptime" value={<span className="text-muted-foreground/60">tracking starts now</span>} />
+  }
+
+  const streakMs = now - new Date(connection.since).getTime()
+  const outage = connection.lastOutage
+  return (
+    <>
+      <Row
+        label={connection.online ? 'Connected for' : 'Offline for'}
+        value={
+          <span className="inline-flex flex-col items-end">
+            <span className={connection.online ? 'text-energy-green' : 'text-energy-red'}>
+              {connection.sinceExact ? '' : '≥ '}
+              {formatDuration(streakMs)}
+            </span>
+            <span className="text-[10px] text-muted-foreground">since {formatMoment(connection.since)}</span>
+          </span>
+        }
+      />
+      <Row
+        label="Last outage"
+        value={
+          outage ? (
+            <span className="inline-flex flex-col items-end">
+              <span>
+                {outage.exact ? '' : '≥ '}
+                {formatDuration(outage.durationMs)}
+                {outage.end === null && ' (ongoing)'}
+              </span>
+              <span className="text-[10px] text-muted-foreground">{formatMoment(outage.start)}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground/60">none</span>
+          )
+        }
+      />
+      <Row label="Disconnects" value={`${connection.disconnects24h} / 24h · ${connection.disconnects7d} / 7d`} />
+    </>
+  )
+}
+
+// BLE advertisement RSSI is lower than Wi-Fi for the same link quality
+function bleQuality(rssi: number): { label: string; bars: number; color: string } {
+  if (rssi >= -65) return { label: 'Excellent', bars: 4, color: 'text-energy-green' }
+  if (rssi >= -75) return { label: 'Good', bars: 3, color: 'text-energy-green' }
+  if (rssi >= -85) return { label: 'Fair', bars: 2, color: 'text-energy-yellow' }
+  return { label: 'Weak', bars: 1, color: 'text-energy-red' }
+}
+
+const BLE_STATES: Record<string, string> = {
+  searching: 'Searching',
+  connecting: 'Connecting…',
+  reconnecting: 'Reconnecting…',
+  paused: 'Paused',
+  waiting_for_user_id: 'Needs EcoFlow user ID',
+  unsupported: 'Model not supported',
+}
+
+const DATA_SOURCE_LABELS: Record<DataSource, string> = {
+  cloud: 'Cloud',
+  ble: 'Bluetooth',
+  'cloud+ble': 'Bluetooth + cloud',
+}
+
+function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
+  ble: BleStatus
+  dataSource: DataSource | null
+  now: number
+  serialNumber: string
+  onChange: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const device = ble.device
+
+  const act = async (run: () => Promise<unknown>) => {
+    setBusy(true)
+    try {
+      await run()
+      onChange()
+    } catch (err) {
+      alert('Bluetooth: ' + (err instanceof Error ? err.message : 'request failed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  let status: ReactNode
+  if (!ble.reachable) status = <span className="text-energy-red">Bridge offline</span>
+  else if (ble.scannerError) status = <span className="text-energy-red">Adapter error</span>
+  else if (!device) status = <span className="text-muted-foreground">Not in range</span>
+  else if (device.live) status = <span className="text-energy-green">Connected</span>
+  else if (device.state === 'paused' && device.pausedUntil)
+    status = <span className="text-energy-yellow">Paused until {formatMoment(new Date(device.pausedUntil).toISOString())}</span>
+  else status = <span className="text-energy-yellow">{BLE_STATES[device.state] ?? device.state.replace(/_/g, ' ')}</span>
+
+  const quality = device?.rssi != null ? bleQuality(device.rssi) : null
+  const problem = !ble.reachable ? ble.error : ble.scannerError ?? (device && !device.live ? device.error : null)
+
+  return (
+    <section>
+      <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1">
+        <Bluetooth className="w-3 h-3" /> Bluetooth
+      </h3>
+      <div className="divide-y divide-border/50">
+        <Row label="Status" value={status} />
+        {dataSource && <Row label="Data via" value={DATA_SOURCE_LABELS[dataSource]} mono={false} />}
+        {quality && device?.rssi != null && (
+          <Row
+            label="Signal"
+            value={
+              <span className={cn('inline-flex items-center gap-1.5', quality.color)}>
+                <SignalBars bars={quality.bars} />
+                {device.rssi} dBm · {quality.label}
+              </span>
+            }
+          />
+        )}
+        {device?.live && device.authenticatedSince && (
+          <Row label="Connected for" value={formatDuration(now - device.authenticatedSince)} />
+        )}
+        {device?.lastPacketAt && !device.live && (
+          <Row label="Last data" value={formatMoment(new Date(device.lastPacketAt).toISOString())} />
+        )}
+        {problem && <Row label="Error" value={<span className="text-energy-red">{problem}</span>} mono={false} />}
+      </div>
+      {device && ble.reachable && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {device.state === 'paused' ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act(() => api.resumeBle(serialNumber))}
+              className="px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+            >
+              Reconnect now
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => act(() => api.pauseBle(serialNumber, 15))}
+              className="px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+            >
+              Free for EcoFlow app · 15 min
+            </button>
+          )}
+          <span className="text-[10px] text-muted-foreground/70">
+            {ble.mode === 'prefer' ? 'Bluetooth first, cloud as backup' : 'Cloud first, Bluetooth as backup'}
+          </span>
+        </div>
+      )}
+    </section>
+  )
+}
+
 const NotReported = () => <span className="text-muted-foreground/60">not reported</span>
 
 export function DeviceInfoCard({ serialNumber, online }: DeviceInfoCardProps) {
-  const { data: info, isLoading, error } = useQuery({
+  const { data: info, isLoading, error, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['deviceInfo', serialNumber, online],
     queryFn: async () => (await api.getDeviceInfo(serialNumber)).data,
-    // Firmware and serials rarely change; RSSI is worth a periodic refresh
-    refetchInterval: online ? 60_000 : false,
+    // Firmware and serials rarely change; signal, uptime and the Bluetooth session are
+    // worth a periodic refresh
+    refetchInterval: (query) => (query.state.data?.ble.enabled ? 15_000 : 60_000),
     staleTime: 30_000,
   })
 
@@ -72,21 +244,32 @@ export function DeviceInfoCard({ serialNumber, online }: DeviceInfoCardProps) {
         <p className="text-center text-muted-foreground py-6 text-xs">Device info unavailable</p>
       ) : (
         <div className="grid gap-x-8 gap-y-4 p-4 md:grid-cols-3">
-          <section>
-            <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-              General
-            </h3>
-            <div className="divide-y divide-border/50">
-              <Row label="Serial number" value={info.serialNumber} />
-              <Row label="Product" value={info.productName} mono={false} />
-              {info.model != null && <Row label="Model code" value={info.model} />}
-              {info.batteryPacks
-                .filter((pack) => pack.serialNumber)
-                .map((pack) => (
-                  <Row key={pack.label} label={`${pack.label} S/N`} value={pack.serialNumber} />
-                ))}
-            </div>
-          </section>
+          <div className="space-y-4">
+            <section>
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                General
+              </h3>
+              <div className="divide-y divide-border/50">
+                <Row label="Serial number" value={info.serialNumber} />
+                <Row label="Product" value={info.productName} mono={false} />
+                {info.model != null && <Row label="Model code" value={info.model} />}
+                {info.batteryPacks
+                  .filter((pack) => pack.serialNumber)
+                  .map((pack) => (
+                    <Row key={pack.label} label={`${pack.label} S/N`} value={pack.serialNumber} />
+                  ))}
+              </div>
+            </section>
+            {info.ble.enabled && (
+              <BleSection
+                ble={info.ble}
+                dataSource={info.dataSource}
+                now={dataUpdatedAt}
+                serialNumber={serialNumber}
+                onChange={() => void refetch()}
+              />
+            )}
+          </div>
 
           <section>
             <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
@@ -110,10 +293,21 @@ export function DeviceInfoCard({ serialNumber, online }: DeviceInfoCardProps) {
                   )
                 }
               />
+              <ConnectionRows connection={info.connection} now={dataUpdatedAt} />
               <Row label="Network (SSID)" value={info.wifi.ssid ?? <NotReported />} />
               <Row label="MAC address" value={info.wifi.macAddress ?? <NotReported />} />
               {info.wifi.firmware && <Row label="Wi-Fi module firmware" value={info.wifi.firmware} />}
             </div>
+            {info.connection.online !== null && (
+              <p className="mt-2 text-[10px] leading-snug text-muted-foreground/70">
+                Uptime is the device's link to the EcoFlow cloud, checked every 10 s, so router or internet
+                outages count too.
+                {info.connection.unobservedMs > 0 &&
+                  ` The dashboard was not running for ${formatDuration(info.connection.unobservedMs)} of this period.`}
+                {info.connection.trackingSince &&
+                  ` Tracked since ${formatMoment(info.connection.trackingSince)}.`}
+              </p>
+            )}
             {(!info.wifi.ssid || !info.wifi.macAddress) && (
               <p className="mt-2 flex gap-1 text-[10px] leading-snug text-muted-foreground/70">
                 <Wifi className="w-3 h-3 shrink-0 mt-px" />
