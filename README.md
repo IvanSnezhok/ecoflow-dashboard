@@ -271,9 +271,16 @@ AppArmor profile blocks that (`org.freedesktop.DBus.Error.AccessDenied ... An Ap
 policy prevents this sender ...`), so `compose.yaml` runs this one container with
 `security_opt: apparmor:unconfined`.
 
-**Modes.** `prefer` (default): BLE is the primary channel for data and commands, the
+**Switch and modes.** *Settings → Bluetooth (BLE)* has a **Use Bluetooth** switch and
+the **Primary channel** choice; both are stored by the bridge (`server/data/ble/settings.json`)
+and survive restarts. Switched off, the bridge closes its sessions and stops connecting,
+so the panel works over the cloud only and the EcoFlow app can use Bluetooth; it keeps
+scanning, so nearby devices are still listed. The panel's mode choice overrides
+`ECOFLOW_BLE_MODE`; `ECOFLOW_BLE_MODE=off` still disables BLE outright.
+
+`prefer` (*Bluetooth first*, default): BLE is the primary channel for data and commands, the
 cloud fills the fields BLE does not carry (extra-battery details) and takes over when
-BLE is down. `fallback`: the cloud stays primary and BLE is used only while the cloud
+BLE is down. `fallback` (*Cloud first*): the cloud stays primary and BLE is used only while the cloud
 fails. A command that fails on one channel is retried on the other. When the cloud
 cannot be reached the device list falls back to the last known one, so the panel keeps
 showing BLE data after a restart without internet.
@@ -290,7 +297,7 @@ showing BLE data after a restart without internet.
   page shows a `BLE` / `BLE ONLY` badge while data comes over Bluetooth.
 - Wi-Fi uptime in Device Info still tracks the cloud link only.
 
-The bridge's API (`/status`, `/devices/{sn}/command|pause|resume`, `/account/*`) is
+The bridge's API (`/status`, `/settings`, `/devices/{sn}/command|pause|resume`, `/account/*`) is
 reachable only inside the compose network; the panel proxies it under `/api/ble/*`. Its tests need `eflib` on the path:
 
 ```bash

@@ -168,8 +168,10 @@ export interface DeviceTechnicalInfo {
 
 // Direct Bluetooth session through the ble-bridge container
 export interface BleStatus {
-  enabled: boolean;
-  mode: "prefer" | "fallback" | "off";
+  enabled: boolean; // the bridge is configured for this deployment
+  switchedOn: boolean; // the panel switch
+  mode: "prefer" | "fallback" | "off"; // active mode (panel choice, else .env)
+  defaultMode: "prefer" | "fallback" | "off"; // ECOFLOW_BLE_MODE
   reachable: boolean; // the bridge answers
   error: string | null;
   scanning: boolean;

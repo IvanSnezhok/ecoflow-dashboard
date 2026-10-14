@@ -43,6 +43,8 @@ interface BridgeStatus {
   userIdSource: "panel" | "env" | "login" | null;
   userIdHint: string | null;
   loginError: string | null;
+  enabled?: boolean; // panel switch; absent on an older bridge
+  mode?: "prefer" | "fallback" | null;
   now: number;
   devices: BleDeviceStatus[];
 }
@@ -59,19 +61,37 @@ function parseMode(value: string | undefined): BleMode {
 
 class BleBridgeClient {
   readonly url = (process.env.ECOFLOW_BLE_BRIDGE_URL || "").replace(/\/+$/, "");
-  readonly mode = parseMode(process.env.ECOFLOW_BLE_MODE);
+  /** ECOFLOW_BLE_MODE: "off" disables the bridge entirely; otherwise the default mode. */
+  readonly envMode = parseMode(process.env.ECOFLOW_BLE_MODE);
   private status: BridgeStatus | null = null;
   private fetchedAt = 0;
   private lastError: string | null = null;
   private timer: NodeJS.Timeout | null = null;
 
+  /** The bridge is configured for this deployment. */
   get enabled(): boolean {
-    return this.url !== "" && this.mode !== "off";
+    return this.url !== "" && this.envMode !== "off";
+  }
+
+  /** Turned on with the panel switch (default on). */
+  get switchedOn(): boolean {
+    return this.status?.enabled !== false;
+  }
+
+  /** Configured and switched on: BLE takes part in data and commands. */
+  get active(): boolean {
+    return this.enabled && this.switchedOn;
+  }
+
+  /** Active mode: the panel's choice, else ECOFLOW_BLE_MODE. */
+  get mode(): BleMode {
+    if (!this.enabled) return "off";
+    return this.status?.mode ?? this.envMode;
   }
 
   start(): void {
     if (!this.enabled || this.timer) return;
-    console.log(`[BLE] Bridge ${this.url}, mode ${this.mode}`);
+    console.log(`[BLE] Bridge ${this.url}, default mode ${this.envMode}`);
     void this.refresh();
     this.timer = setInterval(() => void this.refresh(), POLL_MS);
     this.timer.unref();
@@ -100,7 +120,9 @@ class BleBridgeClient {
   overview() {
     return {
       enabled: this.enabled,
+      switchedOn: this.switchedOn,
       mode: this.mode,
+      defaultMode: this.envMode,
       reachable: this.reachable,
       error: this.reachable ? null : this.lastError,
       scanning: this.status?.scanning ?? false,
@@ -125,13 +147,14 @@ class BleBridgeClient {
 
   /** Live BLE quota, or null when there is no authenticated, recently updated session. */
   freshQuota(sn: string): Record<string, unknown> | null {
+    if (!this.switchedOn) return null;
     const device = this.device(sn);
     if (!device?.authenticated || this.dataAgeMs(device) > BLE_FRESH_MS) return null;
     return device.quota;
   }
 
   canCommand(sn: string): boolean {
-    return this.device(sn)?.authenticated === true;
+    return this.switchedOn && this.device(sn)?.authenticated === true;
   }
 
   private async post(path: string, body: unknown, timeoutMs = REQUEST_TIMEOUT_MS, method = "POST"): Promise<unknown> {
@@ -167,6 +190,11 @@ class BleBridgeClient {
 
   async setUserId(userId: string): Promise<void> {
     await this.post("/account/user-id", { userId });
+  }
+
+  /** Panel switch and mode; stored by the bridge so they survive restarts. */
+  async updateSettings(settings: { enabled?: boolean; mode?: "prefer" | "fallback" }): Promise<void> {
+    await this.post("/settings", settings);
   }
 
   async forgetUserId(): Promise<void> {
