@@ -77,6 +77,9 @@ export function DeviceCard({ device }: DeviceCardProps) {
               device.online ? "bg-energy-green" : "bg-muted-foreground"
             )} />
             {device.online ? "ON" : "OFF"}
+            {device.online && (device.dataSource === "ble" || device.dataSource === "cloud+ble") && (
+              <span className="text-primary" title="Live data over Bluetooth">· BLE</span>
+            )}
           </div>
         </div>
       </div>

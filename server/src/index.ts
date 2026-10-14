@@ -23,6 +23,7 @@ import {
 } from "./db/database.js";
 import { mqttService } from "./services/mqttService.js";
 import { ecoflowApi } from "./services/ecoflowApi.js";
+import { bleBridge } from "./services/bleBridge.js";
 import { getDeviceProfile } from "./services/deviceProfiles.js";
 import { buildStateSample, isUsefulSample } from "./services/stateSample.js";
 import { processDeviceAutomation, buildDeviceMetrics } from "./services/automationEngine.js";
@@ -222,6 +223,9 @@ server.listen(PORT, async () => {
     console.log("Data retention pruning disabled (DASHBOARD_RETENTION_DAYS=0)");
   }
 
+  // Direct Bluetooth channel through the ble-bridge container, when configured
+  bleBridge.start();
+
   // Background data collection every 10 seconds (independent of frontend polling)
   console.log("Starting background data collection...");
   setInterval(async () => {
@@ -233,7 +237,8 @@ server.listen(PORT, async () => {
         // Track how long the Wi-Fi/cloud connection holds. Devices first appear in the
         // database through the /devices route, so unknown ones are picked up later.
         const known = getDeviceBySn(device.sn) as { id: number } | undefined;
-        if (known) recordConnectionState(known.id, device.online === 1);
+        // The cloud's own flag: `online` is also true while BLE alone carries the data.
+        if (known) recordConnectionState(known.id, (device.cloudOnline ?? device.online) === 1);
 
         if (device.online === 1) {
           try {

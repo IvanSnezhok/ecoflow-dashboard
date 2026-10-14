@@ -25,9 +25,13 @@ export interface Device {
     | "RIVER_PRO"
     | "SMART_PLUG";
   name: string;
-  online: boolean;
+  online: boolean; // data available, from the cloud or over Bluetooth
+  cloudOnline?: boolean; // the cloud's own flag: the device's Wi-Fi/cloud link
+  dataSource?: DataSource | null;
   lastSeen: string | null;
 }
+
+export type DataSource = "cloud" | "ble" | "cloud+ble";
 
 export interface ExtraBatteryState {
   soc: number; // State of charge (0-100)
@@ -158,6 +162,31 @@ export interface DeviceTechnicalInfo {
   };
   recordedAt: string | null; // null = live data, otherwise last stored snapshot
   connection: ConnectionSummary;
+  ble: BleStatus;
+  dataSource: DataSource | null;
+}
+
+// Direct Bluetooth session through the ble-bridge container
+export interface BleStatus {
+  enabled: boolean;
+  mode: "prefer" | "fallback" | "off";
+  reachable: boolean; // the bridge answers
+  error: string | null;
+  scanning: boolean;
+  scannerError: string | null;
+  userIdConfigured: boolean;
+  device: {
+    state: string;
+    authenticated: boolean;
+    live: boolean; // fresh data is flowing
+    rssi: number | null; // dBm, from the last advertisement
+    address: string | null;
+    authenticatedSince: number | null; // epoch ms
+    lastPacketAt: number | null;
+    error: string | null;
+    pausedUntil: number | null;
+    sessionsStarted: number;
+  } | null;
 }
 
 // How long the Wi-Fi/cloud connection holds, from the online flag the backend polls

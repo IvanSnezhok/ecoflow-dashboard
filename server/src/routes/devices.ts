@@ -6,6 +6,7 @@ import { buildStateSample, isUsefulSample } from "../services/stateSample.js";
 import { isRealErrorCode } from "../lib/errorClassification.js";
 import { extractTechnicalInfo } from "../services/deviceInfo.js";
 import { summarizeConnection } from "../services/connectionStats.js";
+import { bleBridge } from "../services/bleBridge.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -321,6 +322,8 @@ router.get("/", async (_req: Request, res: Response) => {
           deviceType: apiDevice.productName,
           name: apiDevice.deviceName,
           online: apiDevice.online === 1,
+          cloudOnline: (apiDevice.cloudOnline ?? apiDevice.online) === 1,
+          dataSource: state ? ecoflowApi.getDataSource(apiDevice.sn) : null,
           lastSeen: new Date().toISOString(),
           state,
           lastKnownErrors,
@@ -389,6 +392,63 @@ router.get("/:sn", async (req: Request, res: Response) => {
   }
 });
 
+// BLE session details for the Device Info card (without the raw quota)
+function bleStatusFor(sn: string) {
+  const overview = bleBridge.overview();
+  const device = bleBridge.device(sn);
+  return {
+    ...overview,
+    device: device
+      ? {
+          state: device.state,
+          authenticated: device.authenticated,
+          live: bleBridge.freshQuota(sn) !== null,
+          rssi: device.rssi,
+          address: device.address,
+          authenticatedSince: device.authenticatedSince,
+          lastPacketAt: device.lastPacketAt,
+          error: device.error,
+          pausedUntil: device.pausedUntil,
+          sessionsStarted: device.sessionsStarted,
+        }
+      : null,
+  };
+}
+
+// Free the device's single BLE connection for a while (e.g. to use the EcoFlow app)
+router.post("/:sn/ble/pause", async (req: Request, res: Response) => {
+  const minutes = Number(req.body?.minutes ?? 15);
+  if (!bleBridge.enabled) {
+    res.status(409).json({ error: "BLE bridge is not configured" });
+    return;
+  }
+  if (!Number.isFinite(minutes) || minutes < 1 || minutes > 24 * 60) {
+    res.status(400).json({ error: "minutes must be 1-1440" });
+    return;
+  }
+  try {
+    await bleBridge.pause(req.params.sn, Math.round(minutes));
+    insertLog(null, "COMMAND", "blePause", JSON.stringify({ sn: req.params.sn, minutes }), JSON.stringify({ success: true }), true, null);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Unknown error" });
+  }
+});
+
+router.post("/:sn/ble/resume", async (req: Request, res: Response) => {
+  if (!bleBridge.enabled) {
+    res.status(409).json({ error: "BLE bridge is not configured" });
+    return;
+  }
+  try {
+    await bleBridge.resume(req.params.sn);
+    insertLog(null, "COMMAND", "bleResume", JSON.stringify({ sn: req.params.sn }), JSON.stringify({ success: true }), true, null);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "Unknown error" });
+  }
+});
+
 // Technical details: serial numbers, firmware versions, Wi-Fi. Offline devices
 // get the values from the last stored quota snapshot.
 router.get("/:sn/info", async (req: Request, res: Response) => {
@@ -406,12 +466,16 @@ router.get("/:sn/info", async (req: Request, res: Response) => {
     const now = Date.now();
     const { events, trackingSince } = getConnectionEvents(device.id, 7 * 24 * 60 * 60 * 1000, now);
     const connection = summarizeConnection(events, now, trackingSince);
+    const ble = bleStatusFor(sn);
 
     if (device.online) {
       try {
         const quota = await ecoflowApi.getDeviceQuota(sn);
         if (quota && typeof quota === "object") {
-          res.json({ ...extractTechnicalInfo(sn, device.device_type, quota as Record<string, unknown>), connection });
+          res.json({
+            ...extractTechnicalInfo(sn, device.device_type, quota as Record<string, unknown>),
+            connection, ble, dataSource: ecoflowApi.getDataSource(sn),
+          });
           return;
         }
       } catch (error) {
@@ -420,7 +484,10 @@ router.get("/:sn/info", async (req: Request, res: Response) => {
     }
 
     const stored = getLatestRawData(device.id);
-    res.json({ ...extractTechnicalInfo(sn, device.device_type, stored?.data ?? {}, stored?.timestamp ?? null), connection });
+    res.json({
+      ...extractTechnicalInfo(sn, device.device_type, stored?.data ?? {}, stored?.timestamp ?? null),
+      connection, ble, dataSource: null,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ error: message });

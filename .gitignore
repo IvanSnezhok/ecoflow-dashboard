@@ -47,3 +47,7 @@ ecoflow.db
 server/ecoflow.db
 vite.config.js
 vite.config.d.ts
+
+# Python
+__pycache__/
+*.pyc

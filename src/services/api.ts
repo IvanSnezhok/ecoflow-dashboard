@@ -111,6 +111,12 @@ export const api = {
   getDeviceInfo: (serialNumber: string) =>
     client.get<DeviceTechnicalInfo>(`/devices/${serialNumber}/info`),
 
+  pauseBle: (serialNumber: string, minutes: number) =>
+    client.post(`/devices/${serialNumber}/ble/pause`, { minutes }),
+
+  resumeBle: (serialNumber: string) =>
+    client.post(`/devices/${serialNumber}/ble/resume`),
+
   getDeviceErrors: (serialNumber: string, limit?: number) =>
     client.get<ErrorHistoryResponse>(`/devices/${serialNumber}/errors`, {
       params: { limit },

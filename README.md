@@ -231,6 +231,64 @@ npm run test:smoke    # /history + /errors return identical JSON before/after/-f
 `scripts/makeTestDb.mjs` (`--rows 5000` for a bigger one) and never writes to
 `server/data/ecoflow.db`.
 
+## Bluetooth (BLE) connection
+
+The `ble-bridge` container keeps a direct Bluetooth session to the station through a
+BLE adapter on the host, so monitoring and control keep working when the device's
+Wi-Fi or the internet drops. It uses `eflib` from
+[rabits/ha-ef-ble](https://github.com/rabits/ha-ef-ble) (Apache-2.0, fetched at a
+pinned commit when the image is built) and serves the decoded heartbeats with the
+same keys as the cloud quota (`pd.soc`, `inv.outputWatts`, `inv.acInVol`, ...), so
+charts, automation and the outage logic work unchanged on BLE data.
+
+**Setup**
+
+1. On the host: the adapter must be up and `bluetoothd` running
+   (`bluetoothctl show` lists it as `Powered: yes`). Keep it within a few metres of
+   the station.
+2. Add to `.env` either your EcoFlow user ID or the account login (used once to look
+   the ID up; the ID is then cached in `server/data/ble/`):
+
+   ```
+   ECOFLOW_BLE_EMAIL=you@example.com
+   ECOFLOW_BLE_PASSWORD=...
+   # or: ECOFLOW_BLE_USER_ID=1234567890123456789
+   # optional:
+   ECOFLOW_BLE_MODE=prefer          # prefer | fallback | off
+   ECOFLOW_BLE_DEVICES=DCEBZ5ZE...  # only these serials (default: every EcoFlow in range)
+   ECOFLOW_BLE_REGION=api-e         # login host region (default: auto)
+   ```
+
+3. `docker compose up -d --build` (the in-panel updater builds both images).
+
+**Modes.** `prefer` (default): BLE is the primary channel for data and commands, the
+cloud fills the fields BLE does not carry (extra-battery details) and takes over when
+BLE is down. `fallback`: the cloud stays primary and BLE is used only while the cloud
+fails. A command that fails on one channel is retried on the other. When the cloud
+cannot be reached the device list falls back to the last known one, so the panel keeps
+showing BLE data after a restart without internet.
+
+**What to expect**
+
+- The station accepts **one** BLE connection: while the bridge holds it, the EcoFlow
+  app cannot connect over Bluetooth (it still works over Wi-Fi). *Free for EcoFlow app*
+  in Device Info releases it for 15 minutes.
+- Over BLE the extra batteries only report SOC; capacity, cycles and temperature come
+  from the last cloud reading.
+- The protocol is community reverse-engineered; a firmware update can break it. The
+  Device Info card shows the session state, signal and last error, and the device
+  page shows a `BLE` / `BLE ONLY` badge while data comes over Bluetooth.
+- Wi-Fi uptime in Device Info still tracks the cloud link only.
+
+The bridge's API (`/status`, `/devices/{sn}/command|pause|resume`) is reachable only
+inside the compose network. Its tests need `eflib` on the path:
+
+```bash
+git clone https://github.com/rabits/ha-ef-ble /tmp/ha-ef-ble
+cd ble-bridge && pip install -r requirements.txt
+PYTHONPATH=/tmp/ha-ef-ble/custom_components/ef_ble:. python -m unittest test_bridge
+```
+
 ## Device support
 
 Unknown EcoFlow products are intentionally read-only. Add a documented profile in `server/src/services/deviceProfiles.ts` with quota fixtures and command payload tests before exposing controls for that product.
