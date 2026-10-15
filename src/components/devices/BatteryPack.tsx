@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle, CheckCircle2, Clock } from 'lucide-react'
 import type { ExtraBatteryState } from '@/types/device'
 import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
 import { getErrorInfo } from '@/utils/errorCodes'
@@ -32,6 +32,13 @@ interface BatteryUnitProps {
   errCode?: number
   errType?: 'bms' | 'battery'
   isMain?: boolean
+  /** ISO time of the pack's last report, shown when the latest quota omitted it */
+  heldSince?: string
+}
+
+function ageText(iso: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000))
+  return minutes < 1 ? 'just now' : `${minutes} min ago`
 }
 
 // Calculate Wh from SOC and capacity
@@ -52,6 +59,7 @@ function BatteryUnit({
   errCode,
   errType = 'battery',
   isMain = false,
+  heldSince,
 }: BatteryUnitProps) {
   const getBatteryColor = () => {
     if (soc <= 20) return 'bg-energy-red'
@@ -88,6 +96,15 @@ function BatteryUnit({
           </span>
           {isCharging && (
             <Zap className="w-3 h-3 text-energy-green animate-pulse" fill="currentColor" />
+          )}
+          {heldSince && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+              title="The device skipped this battery in its latest report; showing its last values"
+            >
+              <Clock className="w-3 h-3" />
+              {ageText(heldSince)}
+            </span>
           )}
         </div>
         {/* Wh display */}
@@ -227,6 +244,7 @@ export function BatteryPack({
       remainingWh: extra1RemainingWh,
       fullCapacityWh: extraBatteryCapacityWh,
       errCode: extraBattery1.errCode,
+      heldSince: extraBattery1.held ? extraBattery1.lastUpdated : undefined,
     },
     extraBattery2 && {
       label: 'Extra 2',
@@ -239,6 +257,7 @@ export function BatteryPack({
       remainingWh: extra2RemainingWh,
       fullCapacityWh: extraBatteryCapacityWh,
       errCode: extraBattery2.errCode,
+      heldSince: extraBattery2.held ? extraBattery2.lastUpdated : undefined,
     },
   ].filter(Boolean) as BatteryUnitProps[]
 

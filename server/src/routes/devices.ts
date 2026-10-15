@@ -7,6 +7,7 @@ import { isRealErrorCode } from "../lib/errorClassification.js";
 import { extractTechnicalInfo } from "../services/deviceInfo.js";
 import { summarizeConnection } from "../services/connectionStats.js";
 import { bleBridge } from "../services/bleBridge.js";
+import { extraBatteries, extraBatterySoc, hasExtraBattery } from "../services/extraBatteries.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -23,37 +24,6 @@ import {
 } from "../db/database.js";
 
 const router = Router();
-
-// Cache for extra battery data (Ecoflow API returns data for one battery at a time)
-interface ExtraBatteryCache {
-  extraBattery1?: {
-    soc: number;
-    temp: number;
-    vol: number;
-    inputWatts: number;
-    outputWatts: number;
-    cycles: number;
-    soh: number;
-    fullCap: number;
-    remainCap: number;
-    connected: boolean;
-    lastUpdated: number;
-  };
-  extraBattery2?: {
-    soc: number;
-    temp: number;
-    vol: number;
-    inputWatts: number;
-    outputWatts: number;
-    cycles: number;
-    soh: number;
-    fullCap: number;
-    remainCap: number;
-    connected: boolean;
-    lastUpdated: number;
-  };
-}
-const extraBatteryCache: Map<string, ExtraBatteryCache> = new Map();
 
 // Cache for API responses (to handle 1 req/sec polling without overloading Ecoflow API)
 interface DevicesCache {
@@ -138,29 +108,14 @@ router.get("/", async (_req: Request, res: Response) => {
               };
             }
 
-            // Helper function to parse extra battery data
+            // Extra battery from the quota. ecoflowApi fills in packs a single
+            // answer omits, so `held` marks one shown from its last report.
             const parseExtraBattery = (prefix: string) => {
-              // Check if battery is connected by presence of any battery data
+              if (!hasExtraBattery(q, prefix)) return undefined;
               const fullCap = q[`${prefix}.fullCap`] as number | undefined;
               const vol = q[`${prefix}.vol`] as number | undefined;
-
-              // If no capacity or voltage data, battery is not connected
-              if (!fullCap && !vol) {
-                return undefined;
-              }
-
-              // Get SOC - try direct value first
-              let soc = q[`${prefix}.soc`] as number | undefined;
-
-              // If no direct SOC, try to calculate from remainCap/fullCap
-              if (soc === undefined || soc === null) {
-                const remainCap = q[`${prefix}.remainCap`] as
-                  | number
-                  | undefined;
-                if (remainCap && fullCap && fullCap > 0) {
-                  soc = Math.round((remainCap / fullCap) * 100);
-                }
-              }
+              const soc = extraBatterySoc(q, prefix);
+              const lastSeen = extraBatteries.lastSeen(apiDevice.sn, prefix);
 
               // Temperature - fallback to minCellTemp if temp is missing
               const temp =
@@ -186,6 +141,8 @@ router.get("/", async (_req: Request, res: Response) => {
                 remainCap: (q[`${prefix}.remainCap`] as number) ?? 0,
                 connected: true,
                 errCode: (q[`${prefix}.errCode`] as number) ?? 0,
+                held: extraBatteries.isHeld(apiDevice.sn, prefix),
+                lastUpdated: lastSeen ? new Date(lastSeen).toISOString() : undefined,
               };
             };
 
@@ -236,41 +193,8 @@ router.get("/", async (_req: Request, res: Response) => {
                 bmsWarningState: (q["ems.bmsWarningState"] as number) ?? 0,
               },
               // Extra batteries (bmsSlave1 and bmsSlave2)
-              // Ecoflow API returns data for one battery at a time, so we cache and merge
-              extraBattery1: (() => {
-                const parsed = parseExtraBattery("bmsSlave1");
-                if (parsed) {
-                  // Update cache with fresh data
-                  const cache = extraBatteryCache.get(apiDevice.sn) || {};
-                  cache.extraBattery1 = { ...parsed, lastUpdated: Date.now() };
-                  extraBatteryCache.set(apiDevice.sn, cache);
-                  return parsed;
-                }
-                // Battery disconnected - clear cache and return undefined
-                const cache = extraBatteryCache.get(apiDevice.sn);
-                if (cache?.extraBattery1) {
-                  delete cache.extraBattery1;
-                  extraBatteryCache.set(apiDevice.sn, cache);
-                }
-                return undefined;
-              })(),
-              extraBattery2: (() => {
-                const parsed = parseExtraBattery("bmsSlave2");
-                if (parsed) {
-                  // Update cache with fresh data
-                  const cache = extraBatteryCache.get(apiDevice.sn) || {};
-                  cache.extraBattery2 = { ...parsed, lastUpdated: Date.now() };
-                  extraBatteryCache.set(apiDevice.sn, cache);
-                  return parsed;
-                }
-                // Battery disconnected - clear cache and return undefined
-                const cache = extraBatteryCache.get(apiDevice.sn);
-                if (cache?.extraBattery2) {
-                  delete cache.extraBattery2;
-                  extraBatteryCache.set(apiDevice.sn, cache);
-                }
-                return undefined;
-              })(),
+              extraBattery1: parseExtraBattery("bmsSlave1"),
+              extraBattery2: parseExtraBattery("bmsSlave2"),
               // Charge settings from device
               maxChgSoc: (q["ems.maxChargeSoc"] as number) || undefined,
               minDsgSoc: (q["ems.minDsgSoc"] as number) || undefined,
