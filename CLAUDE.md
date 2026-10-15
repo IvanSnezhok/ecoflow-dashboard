@@ -84,7 +84,7 @@ ECOFLOW_MQTT_PORT=8883
 ## Key Implementation Notes
 
 1. **DeviceLoader component** in `App.tsx` fetches devices globally so direct URL navigation works
-2. **Extra batteries** appear only when `bmsSlave1.soc` or `bmsSlave2.soc` exists in API response
+2. **Extra batteries** (`server/src/services/extraBatteries.ts`): a slot holds a pack when `bmsSlaveN.fullCap` or `.vol` is non-zero. The cloud often omits one bmsSlave block per answer and BLE sends only their SOC, so `ecoflowApi.getDeviceQuota` fills a missing pack from its last report for up to 30 min (`held` + `lastUpdated` in the device state); the panel, charts and the outage runtime forecast all read that filled quota
 3. **Controls** use optimistic UI updates via `updateDeviceState` in Zustand store
 4. **Logs page** filters by type: API_CALL, COMMAND, MQTT
 5. **Device Info card** (`GET /api/devices/:sn/info`, `server/src/services/deviceInfo.ts`) shows serials, firmware (`*.sysVer` packed one byte per part) and Wi-Fi RSSI (`pd.wifiRssi`, 0 = not reported). The Open API quota has no MAC/SSID for DELTA Pro; they are matched by key name for models that do send them

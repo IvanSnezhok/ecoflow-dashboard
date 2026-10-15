@@ -3,6 +3,7 @@ import { generateSignature } from "./signatureService.js";
 import { getAllDevices, getDeviceBySn, getLatestRawData } from "../db/database.js";
 import { getSupportedCommand, type DeviceAction } from "./deviceProfiles.js";
 import { bleBridge, mergeQuotas, CLOUD_BASE_FRESH_MS } from "./bleBridge.js";
+import { extraBatteries } from "./extraBatteries.js";
 
 interface ApiResponse<T> {
   code: string;
@@ -32,6 +33,9 @@ interface DeviceQuota {
   wattsOutSum: number;
   [key: string]: unknown;
 }
+
+/** device_states timestamps are UTC "YYYY-MM-DD HH:MM:SS" */
+const storedAt = (timestamp: string): number => Date.parse(timestamp.replace(" ", "T") + "Z") || 0;
 
 class EcoflowApiClient {
   private baseUrl: string;
@@ -180,9 +184,21 @@ class EcoflowApiClient {
 
   /**
    * Quota for one device, from the cloud, BLE or both depending on ECOFLOW_BLE_MODE
-   * (see bleBridge.ts). BLE values replace cloud ones key by key.
+   * (see bleBridge.ts). BLE values replace cloud ones key by key. Extra batteries
+   * the answer happens to omit are filled in from memory (see extraBatteries.ts).
    */
   async getDeviceQuota(sn: string): Promise<DeviceQuota> {
+    const quota = await this.readQuota(sn);
+    if (!extraBatteries.knows(sn)) {
+      // After a restart the database holds the last snapshot with both packs
+      const device = getDeviceBySn(sn) as { id: number } | undefined;
+      const stored = device ? getLatestRawData(device.id) : null;
+      extraBatteries.seed(sn, stored?.data ?? null, stored ? storedAt(stored.timestamp) : 0);
+    }
+    return extraBatteries.fill(sn, quota) as DeviceQuota;
+  }
+
+  private async readQuota(sn: string): Promise<DeviceQuota> {
     const ble = bleBridge.freshQuota(sn);
     if (!ble) {
       const quota = await this.getCloudQuota(sn);
@@ -215,7 +231,7 @@ class EcoflowApiClient {
       const device = getDeviceBySn(sn) as { id: number } | undefined;
       const stored = device ? getLatestRawData(device.id) : null;
       if (stored) {
-        cloud = { value: stored.data as DeviceQuota, timestamp: Date.parse(stored.timestamp.replace(" ", "T") + "Z") || 0 };
+        cloud = { value: stored.data as DeviceQuota, timestamp: storedAt(stored.timestamp) };
         this.lastCloudQuota.set(sn, cloud);
       }
     }

@@ -45,6 +45,8 @@ export interface ExtraBatteryState {
   remainCap: number; // Remaining capacity in mAh
   connected: boolean; // Whether the battery is connected
   errCode?: number; // Error code (0 = no error)
+  held?: boolean; // Missing from the latest quota; values are from its last report
+  lastUpdated?: string; // ISO time the device last reported this pack
 }
 
 export interface DeviceErrorCodes {

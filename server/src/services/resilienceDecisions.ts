@@ -124,8 +124,10 @@ export function formatDuration(minutes: number): string {
 
 function runtimeText(forecast?: RuntimeForecast): string {
   if (!forecast) return ''
-  if (forecast.hoursRemaining === null) return ' Запасу вистачить більш ніж на 14 діб.'
-  return ` Запасу до резервного SOC: ~${forecast.hoursRemaining} год.`
+  // The pack count shows at a glance whether every extra battery was counted
+  const packs = `батарей: ${forecast.batteryCount}`
+  if (forecast.hoursRemaining === null) return ` Запасу (${packs}) вистачить більш ніж на 14 діб.`
+  return ` Запасу до резервного SOC (${packs}): ~${forecast.hoursRemaining} год.`
 }
 
 /**

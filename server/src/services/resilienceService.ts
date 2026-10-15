@@ -31,6 +31,7 @@ import {
   type LoadModel,
 } from './loadForecast.js'
 import { buildPowerDay, detectGridPresence, GridTracker, type GridObserveResult, type ScheduleWindow } from './powerTimeline.js'
+import { connectedExtraBatterySocs } from './extraBatteries.js'
 import { addDays, kyivDateAtMinutes, kyivDateKey, kyivWeekday } from '../lib/kyivTime.js'
 import type {
   GridStatus,
@@ -365,10 +366,8 @@ export async function processResilienceAutomation(
   if (isScheduleStale()) cachedStatus.risk = 'stale'
   cachedStatus.grid = currentGridStatus()
 
-  const extraSocs = ['bmsSlave1', 'bmsSlave2'].flatMap(prefix =>
-    rawData[`${prefix}.soc`] !== undefined && (rawData[`${prefix}.fullCap`] || rawData[`${prefix}.vol`])
-      ? [Number(rawData[`${prefix}.soc`])] : [],
-  )
+  // rawData comes from ecoflowApi.getDeviceQuota, which keeps packs a single answer omits
+  const extraSocs = connectedExtraBatterySocs(rawData)
   const history = historicalProfile(metrics.deviceId, now.getTime())
   const model: LoadModel = { history, loadProfile: settings.loadProfile, fallbackWatts: Math.max(50, metrics.totalOutputWatts) }
   cachedStatus.forecast = {
