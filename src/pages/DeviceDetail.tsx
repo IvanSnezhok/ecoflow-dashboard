@@ -216,13 +216,16 @@ export default function DeviceDetail() {
                 {device.cloudOnline ? "BLE" : "BLE ONLY"}
               </span>
             )}
-            {/* The cloud refuses this device's REST quota (e.g. a shared device) but pushes it */}
-            {device.online && device.dataSource === "mqtt" && (
+            {/* The cloud refuses this device's REST quota (e.g. a shared device): read from its
+                MQTT push, or in full through the EcoFlow app channel */}
+            {device.online && (device.dataSource === "mqtt" || device.dataSource === "app") && (
               <span
                 className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase bg-primary/10 text-primary"
-                title="EcoFlow refuses this device's REST quota; live data from its MQTT push"
+                title={device.dataSource === "app"
+                  ? "EcoFlow refuses this device's REST quota; live data through the EcoFlow app channel (Settings)"
+                  : "EcoFlow refuses this device's REST quota; live data from its MQTT push"}
               >
-                MQTT
+                {device.dataSource === "app" ? "APP" : "MQTT"}
               </span>
             )}
           </div>

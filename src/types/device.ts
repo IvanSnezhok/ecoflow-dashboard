@@ -31,8 +31,25 @@ export interface Device {
   lastSeen: string | null;
 }
 
-// "mqtt": the REST quota is refused (code 1006, e.g. a shared device), read from MQTT pushes
-export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt";
+// "mqtt": the REST quota is refused (code 1006, e.g. a shared device), read from MQTT pushes;
+// "app": the same, read in full through the EcoFlow app channel
+export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt" | "app";
+
+// GET /api/app-account/status — mirrors server/src/services/appChannel.ts
+export type AppRegion = "api-e" | "api" | "api-a" | "api-j" | "api-r";
+
+export interface AppChannelStatus {
+  signedIn: boolean;
+  source: "panel" | "env" | null;
+  emailHint: string | null;
+  userIdHint: string | null;
+  region: AppRegion | null;
+  defaultRegion: AppRegion;
+  connected: boolean;
+  lastError: string | null;
+  devices: string[];
+  envConfigured: boolean;
+}
 
 export interface ExtraBatteryState {
   soc: number; // State of charge (0-100)

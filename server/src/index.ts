@@ -33,6 +33,8 @@ import { automationRouter } from "./routes/automation.js";
 import systemRouter from "./routes/systemRoutes.js";
 import { resilienceRouter } from "./routes/resilience.js";
 import bleRouter from "./routes/ble.js";
+import appAccountRouter from "./routes/appAccount.js";
+import { appChannel } from "./services/appChannel.js";
 import { redactBody } from "./lib/redact.js";
 import { processResilienceAutomation } from "./services/resilienceService.js";
 
@@ -89,6 +91,11 @@ app.use("/api/ble/login", rateLimit({
   max: 10, // each attempt is a real EcoFlow account login
   message: { error: "Too many login attempts, please wait" },
 }));
+app.use("/api/app-account/login", rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // each attempt is a real EcoFlow account login
+  message: { error: "Too many login attempts, please wait" },
+}));
 
 // Routes
 app.use("/api/devices", devicesRouter);
@@ -97,6 +104,7 @@ app.use("/api/automation", automationRouter);
 app.use("/api/system", systemRouter);
 app.use("/api/resilience", resilienceRouter);
 app.use("/api/ble", bleRouter);
+app.use("/api/app-account", appAccountRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -208,6 +216,9 @@ server.listen(PORT, async () => {
     console.log("Server will continue without real-time updates");
   }
 
+  // EcoFlow app channel for devices the Open API serves only in part (Settings sign-in)
+  appChannel.start();
+
   // Retention is enforced server-side; the UI must not be the cleanup scheduler.
   // DASHBOARD_RETENTION_DAYS=0 (the default) keeps the full history untouched.
   if (config.retention.days > 0) {
@@ -297,6 +308,7 @@ server.listen(PORT, async () => {
 process.on("SIGTERM", () => {
   console.log("SIGTERM received, shutting down...");
   mqttService.disconnect();
+  appChannel.stop();
   server.close(() => {
     console.log("Server closed");
     process.exit(0);
@@ -306,6 +318,7 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   console.log("SIGINT received, shutting down...");
   mqttService.disconnect();
+  appChannel.stop();
   server.close(() => {
     console.log("Server closed");
     process.exit(0);

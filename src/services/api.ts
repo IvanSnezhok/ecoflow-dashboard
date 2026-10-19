@@ -8,6 +8,8 @@ import type {
   DeviceTechnicalInfo,
   BleOverview,
   DataAccessReport,
+  AppChannelStatus,
+  AppRegion,
 } from "@/types/device";
 import type {
   AutomationRule,
@@ -134,6 +136,13 @@ export const api = {
   bleSetUserId: (userId: string) => client.post<BleOverview>("/ble/user-id", { userId }),
 
   bleForgetUserId: () => client.delete<BleOverview>("/ble/account"),
+
+  getAppAccountStatus: () => client.get<AppChannelStatus>("/app-account/status"),
+
+  appLogin: (email: string, password: string, region: AppRegion) =>
+    client.post<AppChannelStatus>("/app-account/login", { email, password, region }, { timeout: 45_000 }),
+
+  appLogout: () => client.delete<AppChannelStatus>("/app-account/account"),
 
   getDeviceErrors: (serialNumber: string, limit?: number) =>
     client.get<ErrorHistoryResponse>(`/devices/${serialNumber}/errors`, {

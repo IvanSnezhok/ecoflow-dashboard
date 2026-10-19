@@ -32,6 +32,9 @@ server/data/*.db
 server/data/*.db-journal
 server/data/*.db-shm
 server/data/*.db-wal
+# EcoFlow app channel sign-in token (services/appChannel.ts)
+server/data/app-account.json
+server/data/app-account.json.tmp
 
 # Testing
 coverage
