@@ -477,7 +477,7 @@ router.get("/:sn/raw", async (req: Request, res: Response) => {
     dataSource: ecoflowApi.getDataSource(sn),
     quotaError,
     quota,
-    mqtt: mqttQuotas.diagnostics(sn),
+    mqtt: { ...mqttQuotas.diagnostics(sn), getRequests: mqttService.getRequestStats() },
   });
 });
 

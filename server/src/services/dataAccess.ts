@@ -3,6 +3,7 @@
 // 1006), e.g. one shared from another account; the check tells that apart from a
 // panel bug. This module is the pure part; dataAccessProbe.ts talks to the cloud.
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
+import { replyMessageFields } from "./mqttQuota.js";
 
 /** Battery and power fields of the DELTA family, asked for by the named-fields read. */
 export const PROBE_FIELDS = [
@@ -25,6 +26,30 @@ export interface ProbeTopic {
   messages: number;
   /** Field names seen in the messages, a few at most */
   keys: string[];
+  /** Most fields in a single message: a full snapshot has hundreds, a push a handful */
+  maxFields: number;
+}
+
+/** One format of full-quota request sent to /get, and what came back on /get_reply */
+export interface ProbeGet {
+  variant: string;
+  sent: number;
+  /** get_reply messages answering this request (matched by id) */
+  replies: number;
+  /** Most quota fields in one of those replies */
+  fieldCount: number;
+  /** From a reply that carried no quota, e.g. a refusal */
+  code?: string;
+  message?: string;
+}
+
+export interface ProbeMqtt {
+  quota: ProbeTopic;
+  status: ProbeTopic;
+  getReply: ProbeTopic;
+  gets: ProbeGet[];
+  /** Messages on the device's other topics, by topic suffix (when a wildcard is allowed) */
+  otherTopics: Record<string, number>;
 }
 
 export interface DeviceProbe {
@@ -36,7 +61,7 @@ export interface DeviceProbe {
   quotaAll: ProbeRead;
   quotaFields: ProbeRead;
   /** null when the MQTT broker could not be reached at all */
-  mqtt: { quota: ProbeTopic; status: ProbeTopic } | null;
+  mqtt: ProbeMqtt | null;
 }
 
 export type ProbeVerdict =
@@ -51,6 +76,8 @@ export interface DataAccessReport {
   checkedAt: string;
   listenSeconds: number;
   mqttError: string | null;
+  /** How the probe subscribed: one wildcard for all device topics, or topic by topic */
+  mqttSubscription: "wildcard" | "topics" | null;
   target: DeviceProbe;
   /** Another online, supported device, read the same way */
   comparison: DeviceProbe | null;
@@ -66,6 +93,34 @@ export function probeSuccess(data: unknown): ProbeRead {
 export function probeFailure(error: unknown): ProbeRead {
   if (error instanceof EcoflowApiError) return { ok: false, code: error.code, message: error.apiMessage };
   return { ok: false, message: error instanceof Error ? error.message : String(error) };
+}
+
+/** Count one message on a topic: how many, which field names, the most fields at once. */
+export function countTopicMessage(topic: ProbeTopic, message: unknown, maxKeys = 25): void {
+  topic.messages++;
+  const fields = replyMessageFields(message) ?? (message && typeof message === "object" ? message : {});
+  const keys = Object.keys(fields);
+  topic.maxFields = Math.max(topic.maxFields, keys.length);
+  for (const key of keys) {
+    if (topic.keys.length < maxKeys && !topic.keys.includes(key)) topic.keys.push(key);
+  }
+}
+
+/** Credit a get_reply to the request it answers (matched by id) and note what it carried. */
+export function recordGetReply(sent: Map<string, ProbeGet>, message: unknown): boolean {
+  if (!message || typeof message !== "object") return false;
+  const reply = message as Record<string, unknown>;
+  const get = reply.id !== undefined ? sent.get(String(reply.id)) : undefined;
+  if (!get) return false;
+  get.replies++;
+  const fields = replyMessageFields(reply);
+  if (fields) {
+    get.fieldCount = Math.max(get.fieldCount, Object.keys(fields).length);
+  } else {
+    if (reply.code !== undefined) get.code = String(reply.code);
+    if (typeof reply.message === "string") get.message = reply.message;
+  }
+  return true;
 }
 
 const servesData = (probe: DeviceProbe): boolean =>

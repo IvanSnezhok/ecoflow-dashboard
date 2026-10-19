@@ -15,6 +15,15 @@ export const MQTT_QUOTA_FRESH_MS = 2 * 60_000;
 /** Raw messages kept per device for the raw-data download: the latest of each shape. */
 const MAX_SAMPLES = 20;
 
+/**
+ * Formats of the full-quota request sent to /open/<account>/<sn>/get: the one Open API
+ * integrations use, and the EcoFlow app's own. Both are reads; replies echo the id.
+ */
+export const FULL_QUOTA_REQUESTS: Array<{ variant: string; build: (id: number, sn: string) => Record<string, unknown> }> = [
+  { variant: "latestQuotas", build: (id, sn) => ({ id, version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {}, sn }) },
+  { variant: "latestQuotas (app)", build: (id) => ({ from: "Android", id: String(id), version: "1.0", moduleType: 0, operateType: "latestQuotas", params: {} }) },
+];
+
 const asFields = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0
     ? (value as Record<string, unknown>)

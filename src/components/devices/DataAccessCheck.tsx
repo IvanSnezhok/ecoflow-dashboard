@@ -3,7 +3,7 @@ import { Loader2, Stethoscope } from 'lucide-react'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { Row } from '@/components/devices/DeviceInfoCard'
-import type { DataAccessReport, DeviceProbe, ProbeRead, ProbeTopic, ProbeVerdict } from '@/types/device'
+import type { DataAccessReport, DeviceProbe, ProbeGet, ProbeRead, ProbeTopic, ProbeVerdict } from '@/types/device'
 
 const Good = ({ children }: { children: ReactNode }) => <span className="text-energy-green">{children}</span>
 const Warn = ({ children }: { children: ReactNode }) => <span className="text-energy-yellow">{children}</span>
@@ -23,7 +23,19 @@ function topicValue(topic: ProbeTopic | undefined): ReactNode {
   if (!topic) return <Bad>not connected</Bad>
   if (!topic.subscribed) return <span className="text-energy-red" title={topic.error}>refused</span>
   if (topic.messages === 0) return <Warn>subscribed · no messages</Warn>
-  return <Good>{topic.messages} {topic.messages === 1 ? 'message' : 'messages'}</Good>
+  return (
+    <Good>
+      {topic.messages} {topic.messages === 1 ? 'message' : 'messages'}
+      {topic.maxFields > 0 && ` · up to ${topic.maxFields} fields`}
+    </Good>
+  )
+}
+
+/** A full-quota request (answered on get_reply): replies, a refusal, or silence */
+function getValue(get: ProbeGet): ReactNode {
+  if (get.fieldCount > 0) return <Good>{get.replies} {get.replies === 1 ? 'reply' : 'replies'} · {get.fieldCount} fields</Good>
+  if (get.replies > 0) return <Bad>{get.code ? `code ${get.code}: ` : ''}{get.message ?? 'reply without data'}</Bad>
+  return <Warn>no reply ({get.sent} sent)</Warn>
 }
 
 function ProbeColumn({ probe, role, listenSeconds }: { probe: DeviceProbe; role: string; listenSeconds: number }) {
@@ -51,6 +63,16 @@ function ProbeColumn({ probe, role, listenSeconds }: { probe: DeviceProbe; role:
           </p>
         )}
         <Row label="MQTT status" mono={false} value={topicValue(probe.mqtt?.status)} />
+        <Row label="MQTT get_reply" mono={false} value={topicValue(probe.mqtt?.getReply)} />
+        {probe.mqtt?.gets.map((get) => (
+          <Row key={get.variant} label={`get: ${get.variant}`} mono={false} value={getValue(get)} />
+        ))}
+        {probe.mqtt && Object.keys(probe.mqtt.otherTopics).length > 0 && (
+          <Row
+            label="Other topics"
+            value={Object.entries(probe.mqtt.otherTopics).map(([suffix, count]) => `${suffix}: ${count}`).join(', ')}
+          />
+        )}
       </div>
     </section>
   )
@@ -63,9 +85,15 @@ const VERDICTS: Record<ProbeVerdict, { tone: 'good' | 'warn' | 'bad'; text: (rep
   },
   'mqtt-only': {
     tone: 'warn',
-    text: () =>
-      "EcoFlow refuses the REST reads but pushes this device's data over MQTT, so the panel reads it from " +
-      'there. If the device card still shows no data, the field names below tell why.',
+    text: ({ target }) => {
+      const answered = target.mqtt?.gets.find((get) => get.fieldCount > 0)
+      return (
+        "EcoFlow refuses the REST reads but pushes this device's data over MQTT, so the panel reads it from there. " +
+        (answered
+          ? `The full-quota request "${answered.variant}" answers too, so AC power and extra batteries come through.`
+          : 'No full-quota request got an answer, so only the pushed part is available (SOC, battery power, USB ports, limits).')
+      )
+    },
   },
   refused: {
     tone: 'bad',

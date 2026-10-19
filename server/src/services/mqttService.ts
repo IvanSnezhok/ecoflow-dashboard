@@ -1,7 +1,7 @@
 import mqtt, { MqttClient } from "mqtt";
 import { EventEmitter } from "events";
 import { ecoflowApi } from "./ecoflowApi.js";
-import { mqttQuotas } from "./mqttQuota.js";
+import { FULL_QUOTA_REQUESTS, mqttQuotas } from "./mqttQuota.js";
 import { config } from "../config/env.js";
 
 /** After a failed start (e.g. no internet at boot), try again this often. */
@@ -35,7 +35,11 @@ class EcoflowMqttService extends EventEmitter {
   private retryTimer: NodeJS.Timeout | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private lastGetAt = 0;
+  private getsSent = 0;
   private getDisconnects = 0;
+  /** Request id -> FULL_QUOTA_REQUESTS index, until a reply shows which format works */
+  private pendingGets = new Map<string, number>();
+  private getVariant: number | null = null;
   private quotaSeen = new Set<string>();
   private repliesSeen = new Set<string>();
 
@@ -114,6 +118,12 @@ class EcoflowMqttService extends EventEmitter {
         }
         if (topic.endsWith("/get_reply")) {
           const full = mqttQuotas.applyReply(sn, data);
+          const variant = full ? this.pendingGets.get(String(data?.id)) : undefined;
+          if (variant !== undefined && this.getVariant === null) {
+            this.getVariant = variant;
+            this.pendingGets.clear();
+            console.log(`MQTT: the "${FULL_QUOTA_REQUESTS[variant].variant}" request answers; using it from now on`);
+          }
           if (!this.repliesSeen.has(sn)) {
             this.repliesSeen.add(sn);
             console.log(full
@@ -192,15 +202,26 @@ class EcoflowMqttService extends EventEmitter {
   /**
    * Ask the device for its full quota snapshot, answered on get_reply. The push alone
    * is a fixed subset (no AC power, no extra batteries); the EcoFlow app asks the same
-   * way. Read-only: it changes nothing on the device.
+   * way. Until one format gets an answer with data, every format goes out.
+   * Read-only: it changes nothing on the device.
    */
   private requestLatestQuotas(sn: string): void {
     if (!this.client?.connected || !this.credentials || this.getDisconnects >= MAX_GET_DISCONNECTS) return;
-    this.lastGetAt = Date.now();
-    const request = { id: Date.now(), version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {}, sn };
-    // QoS 0: a QoS 1 publish the broker refused would be queued and resent on every
-    // reconnect, so a broker that disconnects for it would never let the session up
-    this.client.publish(`/open/${this.credentials.certificateAccount}/${sn}/get`, JSON.stringify(request), { qos: 0 });
+    const variants = this.getVariant !== null ? [this.getVariant] : FULL_QUOTA_REQUESTS.map((_, index) => index);
+    if (this.pendingGets.size > 200) this.pendingGets.clear();
+    for (const variant of variants) {
+      const id = Date.now() * 10 + variant;
+      if (this.getVariant === null) this.pendingGets.set(String(id), variant);
+      this.lastGetAt = Date.now();
+      this.getsSent++;
+      // QoS 0: a QoS 1 publish the broker refused would be queued and resent on every
+      // reconnect, so a broker that disconnects for it would never let the session up
+      this.client.publish(
+        `/open/${this.credentials.certificateAccount}/${sn}/get`,
+        JSON.stringify(FULL_QUOTA_REQUESTS[variant].build(id, sn)),
+        { qos: 0 },
+      );
+    }
   }
 
   subscribeToDevice(sn: string): void {
@@ -223,6 +244,21 @@ class EcoflowMqttService extends EventEmitter {
       this.client = null;
     }
     this.subscribedDevices.clear();
+  }
+
+  /** For the raw-data download: whether full-quota requests go out at all. */
+  getRequestStats(): {
+    connected: boolean; sent: number; lastSentAt: string | null; variant: string | null;
+    disconnectsAfterGet: number; stopped: boolean;
+  } {
+    return {
+      connected: this.connected,
+      sent: this.getsSent,
+      variant: this.getVariant !== null ? FULL_QUOTA_REQUESTS[this.getVariant].variant : null,
+      lastSentAt: this.lastGetAt ? new Date(this.lastGetAt).toISOString() : null,
+      disconnectsAfterGet: this.getDisconnects,
+      stopped: this.getDisconnects >= MAX_GET_DISCONNECTS,
+    };
   }
 
   isConnected(): boolean {
