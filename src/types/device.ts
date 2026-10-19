@@ -229,6 +229,24 @@ export interface ProbeTopic {
   error?: string;
   messages: number;
   keys: string[];
+  maxFields: number;
+}
+
+export interface ProbeGet {
+  variant: string;
+  sent: number;
+  replies: number;
+  fieldCount: number;
+  code?: string;
+  message?: string;
+}
+
+export interface ProbeMqtt {
+  quota: ProbeTopic;
+  status: ProbeTopic;
+  getReply: ProbeTopic;
+  gets: ProbeGet[];
+  otherTopics: Record<string, number>;
 }
 
 export interface DeviceProbe {
@@ -239,7 +257,7 @@ export interface DeviceProbe {
   cloudOnline: boolean;
   quotaAll: ProbeRead;
   quotaFields: ProbeRead;
-  mqtt: { quota: ProbeTopic; status: ProbeTopic } | null;
+  mqtt: ProbeMqtt | null;
 }
 
 export type ProbeVerdict = "data-available" | "mqtt-only" | "refused" | "keys-failing" | "offline" | "not-listed";
@@ -248,6 +266,7 @@ export interface DataAccessReport {
   checkedAt: string;
   listenSeconds: number;
   mqttError: string | null;
+  mqttSubscription: "wildcard" | "topics" | null;
   target: DeviceProbe;
   comparison: DeviceProbe | null;
   verdict: ProbeVerdict;

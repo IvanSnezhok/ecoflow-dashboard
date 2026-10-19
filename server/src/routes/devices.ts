@@ -193,7 +193,8 @@ router.get("/", async (_req: Request, res: Response) => {
                 invErrCode: (q["inv.errCode"] as number) ?? 0,
                 mpptFaultCode: (q["mppt.faultCode"] as number) ?? 0,
                 overloadState: (q["pd.iconOverloadState"] as number) ?? 0,
-                emsIsNormal: (q["ems.emsIsNormalFlag"] as number) === 1,
+                // Absent (the MQTT push of a REST-refused device) is not "sleeping"; same as database.ts
+                emsIsNormal: ((q["ems.emsIsNormalFlag"] as number | undefined) ?? 1) === 1,
                 // Official DELTA Pro fields: permanent BMS fault and the
                 // hi-temp / low-temp / overload warning bitfield
                 bmsFault: (q["bmsMaster.bmsFault"] as number) ?? 0,
@@ -477,7 +478,7 @@ router.get("/:sn/raw", async (req: Request, res: Response) => {
     dataSource: ecoflowApi.getDataSource(sn),
     quotaError,
     quota,
-    mqtt: mqttQuotas.diagnostics(sn),
+    mqtt: { ...mqttQuotas.diagnostics(sn), getRequests: mqttService.getRequestStats() },
   });
 });
 
