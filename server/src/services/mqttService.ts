@@ -6,6 +6,10 @@ import { config } from "../config/env.js";
 
 /** After a failed start (e.g. no internet at boot), try again this often. */
 const CONNECT_RETRY_MS = 60_000;
+/** How often a REST-refused device is asked for its full quota, as the EcoFlow app does. */
+const LATEST_QUOTAS_INTERVAL_MS = 20_000;
+/** A broker dropping the connection right after a get refuses it; stop asking after this many. */
+const MAX_GET_DISCONNECTS = 3;
 
 interface MqttCredentials {
   url: string;
@@ -29,7 +33,11 @@ class EcoflowMqttService extends EventEmitter {
   private connected = false;
   private lastError: string | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
+  private refreshTimer: NodeJS.Timeout | null = null;
+  private lastGetAt = 0;
+  private getDisconnects = 0;
   private quotaSeen = new Set<string>();
+  private repliesSeen = new Set<string>();
 
   constructor() {
     super();
@@ -89,6 +97,9 @@ class EcoflowMqttService extends EventEmitter {
       this.emit("connected");
 
       for (const sn of mqttQuotas.wantedDevices()) this.subscribeQuota(sn);
+      this.refreshTimer ??= setInterval(() => {
+        for (const sn of mqttQuotas.wantedDevices()) this.requestLatestQuotas(sn);
+      }, LATEST_QUOTAS_INTERVAL_MS);
     });
 
     this.client.on("message", (topic, payload) => {
@@ -96,9 +107,19 @@ class EcoflowMqttService extends EventEmitter {
         const data = JSON.parse(payload.toString());
         const sn = this.extractSnFromTopic(topic);
 
+        mqttQuotas.sample(sn, topic, data);
         if (topic.endsWith("/quota") && mqttQuotas.apply(sn, data) && !this.quotaSeen.has(sn)) {
           this.quotaSeen.add(sn);
           console.log(`MQTT quota pushes arriving for ${sn}`);
+        }
+        if (topic.endsWith("/get_reply")) {
+          const full = mqttQuotas.applyReply(sn, data);
+          if (!this.repliesSeen.has(sn)) {
+            this.repliesSeen.add(sn);
+            console.log(full
+              ? `MQTT full quota arriving for ${sn} (latestQuotas replies)`
+              : `MQTT get_reply for ${sn} carried no quota: ${JSON.stringify(data).slice(0, 300)}`);
+          }
         }
 
         const message: DeviceMessage = {
@@ -127,6 +148,9 @@ class EcoflowMqttService extends EventEmitter {
       if (!this.connected) return;
       this.connected = false;
       console.log("MQTT connection closed");
+      if (Date.now() - this.lastGetAt < 3000 && ++this.getDisconnects === MAX_GET_DISCONNECTS) {
+        console.warn("MQTT: the broker drops the connection after latestQuotas requests; relying on pushes alone");
+      }
       this.emit("disconnected");
     });
 
@@ -148,14 +172,35 @@ class EcoflowMqttService extends EventEmitter {
     return parts[parts.length - 1] || "unknown";
   }
 
-  /** Subscribe to a device's quota pushes (see mqttQuota.ts); repeated on reconnect. */
+  /**
+   * Subscribe to a device's quota pushes and get replies (see mqttQuota.ts), then ask
+   * for the full quota. Repeated on reconnect.
+   */
   private subscribeQuota(sn: string): void {
     if (!this.client?.connected || !this.credentials) return;
-    const topic = `/open/${this.credentials.certificateAccount}/${sn}/quota`;
-    this.client.subscribe(topic, { qos: 1 }, (error) => {
-      if (error) console.error(`MQTT subscribe for ${sn} failed: ${error.message}`);
-      else console.log(`MQTT subscribed to quota pushes for ${sn}`);
+    const base = `/open/${this.credentials.certificateAccount}/${sn}`;
+    this.client.subscribe([`${base}/quota`, `${base}/get_reply`], { qos: 1 }, (error) => {
+      if (error) {
+        console.error(`MQTT subscribe for ${sn} failed: ${error.message}`);
+        return;
+      }
+      console.log(`MQTT subscribed to quota pushes for ${sn}`);
+      this.requestLatestQuotas(sn);
     });
+  }
+
+  /**
+   * Ask the device for its full quota snapshot, answered on get_reply. The push alone
+   * is a fixed subset (no AC power, no extra batteries); the EcoFlow app asks the same
+   * way. Read-only: it changes nothing on the device.
+   */
+  private requestLatestQuotas(sn: string): void {
+    if (!this.client?.connected || !this.credentials || this.getDisconnects >= MAX_GET_DISCONNECTS) return;
+    this.lastGetAt = Date.now();
+    const request = { id: Date.now(), version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {}, sn };
+    // QoS 0: a QoS 1 publish the broker refused would be queued and resent on every
+    // reconnect, so a broker that disconnects for it would never let the session up
+    this.client.publish(`/open/${this.credentials.certificateAccount}/${sn}/get`, JSON.stringify(request), { qos: 0 });
   }
 
   subscribeToDevice(sn: string): void {
@@ -171,6 +216,8 @@ class EcoflowMqttService extends EventEmitter {
   }
 
   disconnect(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
     if (this.client) {
       this.client.end();
       this.client = null;

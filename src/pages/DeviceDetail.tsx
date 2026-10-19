@@ -174,8 +174,11 @@ export default function DeviceDetail() {
   }
 
   const state = device.state;
-  const isCharging = state ? state.batteryWatts > 0 : false;
-  const isDischarging = state ? state.batteryWatts < 0 : false;
+  // AC input feeds the AC output while the battery rests; a few watts either way are
+  // conversion losses in the station's in/out sums, not charging
+  const isBypass = !!state && state.acInputWatts > 0 && state.acOutputWatts > 0 && Math.abs(state.batteryWatts) <= 30;
+  const isCharging = state && !isBypass ? state.batteryWatts > 0 : false;
+  const isDischarging = state && !isBypass ? state.batteryWatts < 0 : false;
   // A read-only device (e.g. a DELTA Max read from MQTT) shows only the settings it
   // reports, not a slider's default value
   const showChargePower = state?.acChargingPower !== undefined || device.capabilities?.chargingPower !== undefined || !device.capabilities;
@@ -277,6 +280,7 @@ export default function DeviceDetail() {
           batterySoc={state.batterySoc}
           isCharging={isCharging}
           isDischarging={isDischarging}
+          isBypass={isBypass}
         />
       )}
 
@@ -327,11 +331,12 @@ export default function DeviceDetail() {
                       <span className="text-muted-foreground">Status</span>
                       <p className={cn(
                         "font-mono font-semibold",
+                        isBypass ? "text-energy-purple" :
                         isCharging ? "text-energy-green" :
                         isDischarging ? "text-energy-blue" :
                         "text-muted-foreground"
                       )}>
-                        {isCharging ? "CHARGING" : isDischarging ? "DISCHARGING" : "IDLE"}
+                        {isBypass ? "BYPASS" : isCharging ? "CHARGING" : isDischarging ? "DISCHARGING" : "IDLE"}
                       </p>
                     </div>
                     <div>
