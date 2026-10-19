@@ -31,7 +31,8 @@ export interface Device {
   lastSeen: string | null;
 }
 
-export type DataSource = "cloud" | "ble" | "cloud+ble";
+// "mqtt": the REST quota is refused (code 1006, e.g. a shared device), read from MQTT pushes
+export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt";
 
 export interface ExtraBatteryState {
   soc: number; // State of charge (0-100)

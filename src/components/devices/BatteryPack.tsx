@@ -4,8 +4,13 @@ import type { ExtraBatteryState } from '@/types/device'
 import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
 import { getErrorInfo } from '@/utils/errorCodes'
 
-// Capacity for all EcoFlow batteries (Delta Pro and Smart Extra Battery) in Wh
+// Capacity of a DELTA Pro and its Smart Extra Battery in Wh
 const BATTERY_CAPACITY_WH = 3600
+
+/** Wh per pack for a product: the DELTA Max (2000) and its extra battery hold 2016 Wh each. */
+export function packCapacityWh(deviceType: string): number {
+  return /^DELTA[ _-]?MAX$/i.test(deviceType.trim()) ? 2016 : BATTERY_CAPACITY_WH
+}
 
 interface BatteryPackProps {
   mainSoc: number

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useDeviceStore } from "@/stores/deviceStore";
 import { EnergyFlowDiagram } from "@/components/devices/EnergyFlowDiagram";
-import { BatteryPack } from "@/components/devices/BatteryPack";
+import { BatteryPack, packCapacityWh } from "@/components/devices/BatteryPack";
 import { TechnicalToggle } from "@/components/ui/TechnicalToggle";
 import { TechnicalSlider } from "@/components/ui/TechnicalSlider";
 import {
@@ -176,6 +176,10 @@ export default function DeviceDetail() {
   const state = device.state;
   const isCharging = state ? state.batteryWatts > 0 : false;
   const isDischarging = state ? state.batteryWatts < 0 : false;
+  // A read-only device (e.g. a DELTA Max read from MQTT) shows only the settings it
+  // reports, not a slider's default value
+  const showChargePower = state?.acChargingPower !== undefined || device.capabilities?.chargingPower !== undefined || !device.capabilities;
+  const showChargeLimits = state?.maxChgSoc !== undefined || device.capabilities?.chargeLimits !== false;
 
   return (
     <div className="space-y-6">
@@ -207,6 +211,15 @@ export default function DeviceDetail() {
                 title={device.cloudOnline ? "Live data over Bluetooth; cloud connected too" : "Cloud unreachable; live data over Bluetooth"}
               >
                 {device.cloudOnline ? "BLE" : "BLE ONLY"}
+              </span>
+            )}
+            {/* The cloud refuses this device's REST quota (e.g. a shared device) but pushes it */}
+            {device.online && device.dataSource === "mqtt" && (
+              <span
+                className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase bg-primary/10 text-primary"
+                title="EcoFlow refuses this device's REST quota; live data from its MQTT push"
+              >
+                MQTT
               </span>
             )}
           </div>
@@ -277,6 +290,8 @@ export default function DeviceDetail() {
             mainErrCode={state.errorCodes?.bmsMasterErrCode}
             extraBattery1={state.extraBattery1}
             extraBattery2={state.extraBattery2}
+            mainCapacityWh={packCapacityWh(device.deviceType)}
+            extraBatteryCapacityWh={packCapacityWh(device.deviceType)}
           />
         )}
 
@@ -359,9 +374,9 @@ export default function DeviceDetail() {
             <span className="text-xs font-semibold uppercase tracking-wider">Charge Settings</span>
           </div>
           <div className="p-4">
-            {state ? (
+            {state && (showChargePower || showChargeLimits) ? (
               <div className="space-y-4">
-                <div>
+                {showChargePower && <div>
                   <TechnicalSlider
                     label="AC Charging Power"
                     value={state.acChargingPower ?? 1800}
@@ -378,7 +393,8 @@ export default function DeviceDetail() {
                       Fast charging enabled
                     </p>
                   )}
-                </div>
+                </div>}
+                {showChargeLimits && <>
                 <TechnicalSlider
                   label="Max Charge Level"
                   value={state.maxChgSoc ?? 100}
@@ -401,10 +417,11 @@ export default function DeviceDetail() {
                   disabled={!device.online || device.capabilities?.chargeLimits === false || isSettingMinSoc}
                   accentColor="blue"
                 />
+                </>}
               </div>
             ) : (
               <p className="text-center text-muted-foreground py-4 text-xs">
-                No data
+                {state ? "Not reported by this device" : "No data"}
               </p>
             )}
           </div>

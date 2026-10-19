@@ -121,6 +121,7 @@ const DATA_SOURCE_LABELS: Record<DataSource, string> = {
   cloud: 'Cloud',
   ble: 'Bluetooth',
   'cloud+ble': 'Bluetooth + cloud',
+  mqtt: 'Cloud MQTT push',
 }
 
 function BleSection({ ble, dataSource, now, serialNumber, onChange }: {

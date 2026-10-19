@@ -312,6 +312,8 @@ Unknown EcoFlow products are intentionally read-only. Add a documented profile i
 
 A device can be in the cloud list and still show no data, for example one shared from another account, whose quota the Open API refuses with code 1006. Its dashboard card then shows the cloud's answer, and the **Data access check** at the bottom of the device page (`POST /api/devices/:sn/probe`) asks the Open API for its data on every channel: the full quota, the named-fields read and the MQTT quota/status topics (listened to for 45 s), next to another online device for comparison. It sends no commands; the result is also kept in the Logs page as `dataAccessCheck`.
 
+When the check finds data only on MQTT (as for a shared DELTA Max), the panel reads the device from there: the first refused REST read subscribes to its quota topic, and the device page marks it **MQTT**. Such a device is read-only; REST is tried again every 10 minutes in case access was granted.
+
 ## Kyiv outage resilience
 
 The **Power reserve** page reads planned, probable and emergency outage states from

@@ -146,24 +146,14 @@ wss.on("connection", (ws) => {
   );
 });
 
-// Forward MQTT messages to WebSocket clients
+// Forward MQTT messages to WebSocket clients. They are not stored here: each carries a
+// few fields and arrives several times a second; mqttQuota.ts merges them and the
+// background collection stores that merged quota every 10 s like a REST answer.
 mqttService.on("message", (message) => {
   const wsMessage = JSON.stringify({
     type: "deviceUpdate",
     data: message,
   });
-
-  // Save to database. MQTT pushes only the keys that changed (usually wrapped in
-  // `params`), so a message without SOC/power must not become a row of zeros.
-  const device = getDeviceBySn(message.sn) as { id: number } | undefined;
-  if (device && message.data) {
-    const raw = message.data as Record<string, unknown>;
-    const params = (raw.params && typeof raw.params === "object" ? raw.params : raw) as Record<string, unknown>;
-    const sample = buildStateSample(params);
-    if (sample.batterySoc !== null) {
-      insertDeviceState(device.id, { ...sample, rawData: JSON.stringify(params) });
-    }
-  }
 
   clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
