@@ -13,7 +13,8 @@
     "test:sample": "npm run build && node dist/services/stateSample.test.js && node dist/services/extraBatteries.test.js",
     "test:info": "npm run build && node dist/services/deviceInfo.test.js",
     "test:connection": "npm run build && node dist/services/connectionStats.test.js",
-    "test:ble": "npm run build && node dist/services/bleBridge.test.js"
+    "test:ble": "npm run build && node dist/services/bleBridge.test.js",
+    "test:access": "npm run build && node dist/services/dataAccess.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",

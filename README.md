@@ -310,11 +310,7 @@ PYTHONPATH=/tmp/ha-ef-ble/custom_components/ef_ble:. python -m unittest test_bri
 
 Unknown EcoFlow products are intentionally read-only. Add a documented profile in `server/src/services/deviceProfiles.ts` with quota fixtures and command payload tests before exposing controls for that product.
 
-A device can be in the cloud list and still show no data, for example one shared from another account, whose quota the Open API refuses with code 1006. `scripts/probeDevice.mjs` tries each Open API channel for it (full quota, named fields, MQTT quota/status topics) and sends no commands. Pass a working device too, to compare:
-
-```bash
-docker exec -i ecoflow-dashboard node --input-type=module - <serial> <working-serial> < scripts/probeDevice.mjs
-```
+A device can be in the cloud list and still show no data, for example one shared from another account, whose quota the Open API refuses with code 1006. Its dashboard card then shows the cloud's answer, and the **Data access check** at the bottom of the device page (`POST /api/devices/:sn/probe`) asks the Open API for its data on every channel: the full quota, the named-fields read and the MQTT quota/status topics (listened to for 45 s), next to another online device for comparison. It sends no commands; the result is also kept in the Logs page as `dataAccessCheck`.
 
 ## Kyiv outage resilience
 

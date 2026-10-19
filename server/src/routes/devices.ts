@@ -8,6 +8,8 @@ import { extractTechnicalInfo } from "../services/deviceInfo.js";
 import { summarizeConnection } from "../services/connectionStats.js";
 import { bleBridge } from "../services/bleBridge.js";
 import { extraBatteries, extraBatterySoc, hasExtraBattery } from "../services/extraBatteries.js";
+import { isDataAccessCheckRunning, runDataAccessCheck } from "../services/dataAccessProbe.js";
+import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -70,6 +72,8 @@ router.get("/", async (_req: Request, res: Response) => {
 
         // Get quota for online devices
         let state = null;
+        // Why an online device has no state, e.g. the cloud refusing it (code 1006)
+        let quotaError: string | null = null;
         if (apiDevice.online === 1) {
           try {
             const quota = await ecoflowApi.getDeviceQuota(apiDevice.sn);
@@ -213,6 +217,9 @@ router.get("/", async (_req: Request, res: Response) => {
             mqttService.subscribeToDevice(apiDevice.sn);
           } catch (error) {
             console.error(`Failed to get quota for ${apiDevice.sn}:`, error);
+            quotaError = error instanceof EcoflowApiError
+              ? `code ${error.code}: ${error.apiMessage}`
+              : error instanceof Error ? error.message : String(error);
           }
         }
 
@@ -250,6 +257,7 @@ router.get("/", async (_req: Request, res: Response) => {
           dataSource: state ? ecoflowApi.getDataSource(apiDevice.sn) : null,
           lastSeen: new Date().toISOString(),
           state,
+          quotaError,
           lastKnownErrors,
           profileId: getDeviceProfile(apiDevice.productName).id,
           category: getDeviceProfile(apiDevice.productName).category,
@@ -414,6 +422,30 @@ router.get("/:sn/info", async (req: Request, res: Response) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
+// Data access check: which Open API channels serve this device's data. Read-only;
+// takes about a minute because it listens on MQTT.
+router.post("/:sn/probe", async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const device = getDeviceBySn(sn) as { id: number } | undefined;
+  if (!device) {
+    res.status(404).json({ error: "Device not found" });
+    return;
+  }
+  if (isDataAccessCheckRunning()) {
+    res.status(409).json({ error: "A data access check is already running" });
+    return;
+  }
+  try {
+    const report = await runDataAccessCheck(sn);
+    insertLog(device.id, "API_CALL", "dataAccessCheck", null, JSON.stringify(report), true, null);
+    res.json(report);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    insertLog(device.id, "API_CALL", "dataAccessCheck", null, null, false, message);
     res.status(500).json({ error: message });
   }
 });

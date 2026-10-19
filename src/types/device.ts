@@ -95,6 +95,7 @@ export interface DeviceState {
 
 export interface DeviceWithState extends Device {
   state: DeviceState | null;
+  quotaError?: string | null; // why an online device has no state, e.g. "code 1006: ..."
   lastKnownErrors?: LastKnownErrors | null; // Errors from when device was last online
 }
 
@@ -211,4 +212,42 @@ export interface ConnectionSummary {
 // GET /api/ble/status
 export interface BleOverview extends Omit<BleStatus, "device"> {
   devices: Array<{ sn: string; state: string; live: boolean; error: string | null; rssi: number | null }>;
+}
+
+// POST /api/devices/:sn/probe — mirrors server/src/services/dataAccess.ts
+export interface ProbeRead {
+  ok: boolean;
+  code?: string;
+  message?: string;
+  fieldCount?: number;
+  sample?: Record<string, unknown>;
+}
+
+export interface ProbeTopic {
+  subscribed: boolean;
+  error?: string;
+  messages: number;
+  keys: string[];
+}
+
+export interface DeviceProbe {
+  serialNumber: string;
+  name: string | null;
+  productName: string | null;
+  inList: boolean;
+  cloudOnline: boolean;
+  quotaAll: ProbeRead;
+  quotaFields: ProbeRead;
+  mqtt: { quota: ProbeTopic; status: ProbeTopic } | null;
+}
+
+export type ProbeVerdict = "data-available" | "mqtt-only" | "refused" | "keys-failing" | "offline" | "not-listed";
+
+export interface DataAccessReport {
+  checkedAt: string;
+  listenSeconds: number;
+  mqttError: string | null;
+  target: DeviceProbe;
+  comparison: DeviceProbe | null;
+  verdict: ProbeVerdict;
 }

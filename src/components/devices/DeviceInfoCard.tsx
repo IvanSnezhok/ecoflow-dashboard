@@ -34,7 +34,7 @@ function SignalBars({ bars, className }: { bars: number; className?: string }) {
   )
 }
 
-function Row({ label, value, mono = true }: { label: string; value: ReactNode; mono?: boolean }) {
+export function Row({ label, value, mono = true }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5 text-xs">
       <span className="text-muted-foreground shrink-0">{label}</span>
