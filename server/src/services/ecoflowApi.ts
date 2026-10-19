@@ -4,6 +4,7 @@ import { getAllDevices, getDeviceBySn, getLatestRawData } from "../db/database.j
 import { getSupportedCommand, type DeviceAction } from "./deviceProfiles.js";
 import { bleBridge, mergeQuotas, CLOUD_BASE_FRESH_MS } from "./bleBridge.js";
 import { extraBatteries } from "./extraBatteries.js";
+import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 
 interface ApiResponse<T> {
   code: string;
@@ -118,7 +119,7 @@ class EcoflowApiClient {
     const data = (await response.json()) as ApiResponse<T>;
 
     if (data.code !== "0") {
-      throw new Error(`Ecoflow API error (code ${data.code}): ${data.message}`);
+      throw new EcoflowApiError(String(data.code), data.message);
     }
 
     // For PUT/POST commands, empty data is acceptable (command was successful)
@@ -269,6 +270,16 @@ class EcoflowApiClient {
   }
 
   private invalidateQuota(sn: string): void { this.quotaCache.delete(sn); }
+
+  /** One uncached cloud read of the full quota, for the data access check. */
+  async probeQuotaAll(sn: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("GET", "/iot-open/sign/device/quota/all", { sn });
+  }
+
+  /** The cloud's other read: only the named quota fields. */
+  async getQuotaFields(sn: string, quotas: string[]): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("POST", "/iot-open/sign/device/quota", {}, { sn, params: { quotas } });
+  }
 
   // Generic function for devices that use cmdCode (like PowerStream)
   async setDeviceFunction(

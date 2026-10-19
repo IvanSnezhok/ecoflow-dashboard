@@ -203,8 +203,15 @@ export function DeviceCard({ device }: DeviceCardProps) {
         <div className="px-4 py-8 text-center">
           <Battery className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
           <p className="text-xs text-muted-foreground">
-            {device.profileStatus === "read-only" ? "Read-only profile — telemetry mapping pending" : "No data"}
+            {device.quotaError
+              ? "EcoFlow cloud sends no data for this device"
+              : device.profileStatus === "read-only" ? "Read-only profile — telemetry mapping pending" : "No data"}
           </p>
+          {device.quotaError && (
+            <p className="mt-1 text-[10px] font-mono text-muted-foreground/70 break-words">
+              {device.quotaError} · Details → Data access check
+            </p>
+          )}
         </div>
       )}
     </Link>

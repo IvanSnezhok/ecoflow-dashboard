@@ -26,6 +26,7 @@ import { api } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { DeviceIssues } from "@/components/devices/DeviceIssues";
 import { DeviceInfoCard } from "@/components/devices/DeviceInfoCard";
+import { DataAccessCheck } from "@/components/devices/DataAccessCheck";
 import { collectDeviceIssues } from "@/utils/errorCodes";
 import type { ChartPeriod } from "@/types/device";
 
@@ -476,6 +477,9 @@ export default function DeviceDetail() {
 
       {/* Serial numbers, firmware and Wi-Fi details */}
       <DeviceInfoCard serialNumber={device.serialNumber} online={device.online} />
+
+      {/* Which EcoFlow channels serve this device's data, e.g. for a shared device */}
+      <DataAccessCheck key={device.serialNumber} serialNumber={device.serialNumber} />
     </div>
   );
 }

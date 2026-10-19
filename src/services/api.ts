@@ -7,6 +7,7 @@ import type {
   ErrorHistoryResponse,
   DeviceTechnicalInfo,
   BleOverview,
+  DataAccessReport,
 } from "@/types/device";
 import type {
   AutomationRule,
@@ -111,6 +112,10 @@ export const api = {
 
   getDeviceInfo: (serialNumber: string) =>
     client.get<DeviceTechnicalInfo>(`/devices/${serialNumber}/info`),
+
+  // Listens on MQTT for ~45 s, hence the long timeout
+  probeDataAccess: (serialNumber: string) =>
+    client.post<DataAccessReport>(`/devices/${serialNumber}/probe`, undefined, { timeout: 120_000 }),
 
   pauseBle: (serialNumber: string, minutes: number) =>
     client.post(`/devices/${serialNumber}/ble/pause`, { minutes }),
