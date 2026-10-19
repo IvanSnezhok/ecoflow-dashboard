@@ -39,6 +39,7 @@ class EcoflowMqttService extends EventEmitter {
   private getDisconnects = 0;
   /** Request id -> FULL_QUOTA_REQUESTS index, until a reply shows which format works */
   private pendingGets = new Map<string, number>();
+  private getReplyRefused = false;
   private getVariant: number | null = null;
   private quotaSeen = new Set<string>();
   private repliesSeen = new Set<string>();
@@ -189,14 +190,19 @@ class EcoflowMqttService extends EventEmitter {
   private subscribeQuota(sn: string): void {
     if (!this.client?.connected || !this.credentials) return;
     const base = `/open/${this.credentials.certificateAccount}/${sn}`;
-    this.client.subscribe([`${base}/quota`, `${base}/get_reply`], { qos: 1 }, (error) => {
-      if (error) {
-        console.error(`MQTT subscribe for ${sn} failed: ${error.message}`);
-        return;
-      }
-      console.log(`MQTT subscribed to quota pushes for ${sn}`);
-      this.requestLatestQuotas(sn);
+    // Separately: the broker refuses get_reply to Open API keys (seen on the live panel),
+    // which must not read as the quota subscription failing
+    this.client.subscribe(`${base}/quota`, { qos: 1 }, (error) => {
+      if (error) console.error(`MQTT subscribe for ${sn} failed: ${error.message}`);
+      else console.log(`MQTT subscribed to quota pushes for ${sn}`);
     });
+    this.client.subscribe(`${base}/get_reply`, { qos: 1 }, (error) => {
+      if (error && !this.getReplyRefused) {
+        this.getReplyRefused = true;
+        console.log("MQTT: the broker refuses get_reply to these keys; full snapshots can only arrive on the quota topic");
+      }
+    });
+    this.requestLatestQuotas(sn);
   }
 
   /**

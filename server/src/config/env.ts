@@ -20,6 +20,15 @@ export const config = {
     apiEndpoint: process.env.ECOFLOW_API_ENDPOINT || 'https://api-e.ecoflow.com',
     mqttBroker: process.env.ECOFLOW_MQTT_BROKER || 'mqtt-e.ecoflow.com',
   },
+  // EcoFlow app channel (services/appChannel.ts). Optional: with these set the panel signs
+  // in by itself and again whenever the token expires; the Settings login works without.
+  app: {
+    email: process.env.ECOFLOW_APP_EMAIL || '',
+    password: process.env.ECOFLOW_APP_PASSWORD || '',
+    region: process.env.ECOFLOW_APP_REGION || '',
+    // {region} is replaced; override only to test against a local mock
+    apiBase: process.env.ECOFLOW_APP_API_BASE || 'https://{region}.ecoflow.com',
+  },
   server: {
     port: parseInt(process.env.PORT || '3001', 10),
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',

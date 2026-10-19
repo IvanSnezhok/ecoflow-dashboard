@@ -6,6 +6,7 @@ import { bleBridge, mergeQuotas, CLOUD_BASE_FRESH_MS } from "./bleBridge.js";
 import { extraBatteries } from "./extraBatteries.js";
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 import { mqttQuotas } from "./mqttQuota.js";
+import { appQuotas } from "./appChannel.js";
 
 interface ApiResponse<T> {
   code: string;
@@ -32,7 +33,7 @@ interface DeviceListItem {
   bleOnline?: boolean;
 }
 
-export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt";
+export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt" | "app";
 
 interface DeviceQuota {
   soc: number;
@@ -261,9 +262,11 @@ class EcoflowApiClient {
 
   /**
    * The REST quota, or for a device whose REST reads the API refuses (code 1006, e.g.
-   * one shared from another account) the quota it pushes over MQTT (see mqttQuota.ts).
+   * one shared from another account) what MQTT serves: the Open API push (a subset, see
+   * mqttQuota.ts) under the full quota from the EcoFlow app channel when signed in
+   * (appChannel.ts).
    */
-  private async getServedQuota(sn: string): Promise<{ quota: DeviceQuota; source: "cloud" | "mqtt" }> {
+  private async getServedQuota(sn: string): Promise<{ quota: DeviceQuota; source: "cloud" | "mqtt" | "app" }> {
     const refused = this.restRefused.get(sn);
     if (!refused || Date.now() - refused.at >= REST_REFUSED_RETRY_MS) {
       try {
@@ -286,6 +289,8 @@ class EcoflowApiClient {
     }
 
     const pushed = mqttQuotas.fresh(sn);
+    const app = appQuotas.fresh(sn);
+    if (app) return { quota: { ...pushed, ...app } as DeviceQuota, source: "app" };
     if (pushed) return { quota: pushed as DeviceQuota, source: "mqtt" };
     const { error } = this.restRefused.get(sn)!;
     const note = mqttQuotas.lastMessageAt(sn) ? "MQTT pushes lack the battery level" : "no MQTT data yet";

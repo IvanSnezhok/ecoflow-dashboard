@@ -11,6 +11,7 @@ import { extraBatteries, extraBatterySoc, hasExtraBattery } from "../services/ex
 import { isDataAccessCheckRunning, runDataAccessCheck } from "../services/dataAccessProbe.js";
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 import { mqttQuotas } from "../services/mqttQuota.js";
+import { appChannel, appQuotas } from "../services/appChannel.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -479,6 +480,7 @@ router.get("/:sn/raw", async (req: Request, res: Response) => {
     quotaError,
     quota,
     mqtt: { ...mqttQuotas.diagnostics(sn), getRequests: mqttService.getRequestStats() },
+    app: { ...appQuotas.diagnostics(sn), channel: appChannel.status() },
   });
 });
 

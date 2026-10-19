@@ -122,6 +122,7 @@ const DATA_SOURCE_LABELS: Record<DataSource, string> = {
   ble: 'Bluetooth',
   'cloud+ble': 'Bluetooth + cloud',
   mqtt: 'Cloud MQTT push',
+  app: 'EcoFlow app channel',
 }
 
 function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
