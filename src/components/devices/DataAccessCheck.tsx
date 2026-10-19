@@ -45,6 +45,11 @@ function ProbeColumn({ probe, role, listenSeconds }: { probe: DeviceProbe; role:
         <Row label="Full quota" mono={false} value={readValue(probe.quotaAll)} />
         <Row label="Named fields" mono={false} value={readValue(probe.quotaFields)} />
         <Row label={`MQTT quota · ${listenSeconds} s`} mono={false} value={topicValue(probe.mqtt?.quota)} />
+        {probe.mqtt && probe.mqtt.quota.keys.length > 0 && (
+          <p className="py-1.5 text-[10px] font-mono leading-snug text-muted-foreground/70 break-words">
+            {probe.mqtt.quota.keys.join(', ')}
+          </p>
+        )}
         <Row label="MQTT status" mono={false} value={topicValue(probe.mqtt?.status)} />
       </div>
     </section>
@@ -59,8 +64,8 @@ const VERDICTS: Record<ProbeVerdict, { tone: 'good' | 'warn' | 'bad'; text: (rep
   'mqtt-only': {
     tone: 'warn',
     text: () =>
-      "EcoFlow refuses the REST reads but pushes this device's data over MQTT. The panel reads over REST today, " +
-      'so showing this device needs an MQTT reader.',
+      "EcoFlow refuses the REST reads but pushes this device's data over MQTT, so the panel reads it from " +
+      'there. If the device card still shows no data, the field names below tell why.',
   },
   refused: {
     tone: 'bad',

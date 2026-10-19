@@ -1,7 +1,11 @@
 import mqtt, { MqttClient } from "mqtt";
 import { EventEmitter } from "events";
 import { ecoflowApi } from "./ecoflowApi.js";
+import { mqttQuotas } from "./mqttQuota.js";
 import { config } from "../config/env.js";
+
+/** After a failed start (e.g. no internet at boot), try again this often. */
+const CONNECT_RETRY_MS = 60_000;
 
 interface MqttCredentials {
   url: string;
@@ -22,7 +26,15 @@ class EcoflowMqttService extends EventEmitter {
   private credentials: MqttCredentials | null = null;
   private subscribedDevices: Set<string> = new Set();
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 10;
+  private connected = false;
+  private lastError: string | null = null;
+  private retryTimer: NodeJS.Timeout | null = null;
+  private quotaSeen = new Set<string>();
+
+  constructor() {
+    super();
+    mqttQuotas.onWant((sn) => this.subscribeQuota(sn));
+  }
 
   async connect(): Promise<void> {
     if (this.client?.connected) {
@@ -57,6 +69,11 @@ class EcoflowMqttService extends EventEmitter {
     } catch (error) {
       console.error("Failed to connect to MQTT:", error);
       this.emit("error", error);
+      // Devices whose REST quota is refused depend on MQTT, so keep trying
+      this.retryTimer ??= setTimeout(() => {
+        this.retryTimer = null;
+        this.connect().catch(() => { /* logged above, retried again */ });
+      }, CONNECT_RETRY_MS);
       throw error;
     }
   }
@@ -66,19 +83,23 @@ class EcoflowMqttService extends EventEmitter {
 
     this.client.on("connect", () => {
       console.log("MQTT connected");
+      this.connected = true;
       this.reconnectAttempts = 0;
+      this.lastError = null;
       this.emit("connected");
 
-      // Resubscribe to previously subscribed devices
-      this.subscribedDevices.forEach((sn) => {
-        this.subscribeToDevice(sn);
-      });
+      for (const sn of mqttQuotas.wantedDevices()) this.subscribeQuota(sn);
     });
 
     this.client.on("message", (topic, payload) => {
       try {
         const data = JSON.parse(payload.toString());
         const sn = this.extractSnFromTopic(topic);
+
+        if (topic.endsWith("/quota") && mqttQuotas.apply(sn, data) && !this.quotaSeen.has(sn)) {
+          this.quotaSeen.add(sn);
+          console.log(`MQTT quota pushes arriving for ${sn}`);
+        }
 
         const message: DeviceMessage = {
           sn,
@@ -88,46 +109,58 @@ class EcoflowMqttService extends EventEmitter {
         };
 
         this.emit("message", message);
-        console.log(
-          `MQTT message from ${sn}:`,
-          JSON.stringify(data).slice(0, 200),
-        );
       } catch (error) {
         console.error("Failed to parse MQTT message:", error);
       }
     });
 
+    // While offline every reconnect attempt fails the same way; report each new
+    // error once rather than every few seconds for the length of an outage
     this.client.on("error", (error) => {
-      console.error("MQTT error:", error);
+      if (error.message === this.lastError) return;
+      this.lastError = error.message;
+      console.error("MQTT error:", error.message);
       this.emit("error", error);
     });
 
     this.client.on("close", () => {
+      if (!this.connected) return;
+      this.connected = false;
       console.log("MQTT connection closed");
       this.emit("disconnected");
     });
 
+    // Keeps retrying for as long as it takes: devices whose REST quota is refused
+    // have no other source
     this.client.on("reconnect", () => {
       this.reconnectAttempts++;
-      console.log(`MQTT reconnecting... attempt ${this.reconnectAttempts}`);
-
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-        console.error("Max reconnect attempts reached");
-        this.client?.end();
+      if (this.reconnectAttempts === 1 || this.reconnectAttempts % 60 === 0) {
+        console.log(`MQTT reconnecting... attempt ${this.reconnectAttempts}`);
       }
     });
   }
 
   private extractSnFromTopic(topic: string): string {
-    // Topic format: /app/device/property/{sn}
+    // Open API topics: /open/{certificateAccount}/{sn}/quota (or /status)
+    const open = /^\/open\/[^/]+\/([^/]+)\//.exec(topic);
+    if (open) return open[1];
     const parts = topic.split("/");
     return parts[parts.length - 1] || "unknown";
   }
 
+  /** Subscribe to a device's quota pushes (see mqttQuota.ts); repeated on reconnect. */
+  private subscribeQuota(sn: string): void {
+    if (!this.client?.connected || !this.credentials) return;
+    const topic = `/open/${this.credentials.certificateAccount}/${sn}/quota`;
+    this.client.subscribe(topic, { qos: 1 }, (error) => {
+      if (error) console.error(`MQTT subscribe for ${sn} failed: ${error.message}`);
+      else console.log(`MQTT subscribed to quota pushes for ${sn}`);
+    });
+  }
+
   subscribeToDevice(sn: string): void {
-    // Note: MQTT subscription is not supported with Ecoflow Developer API credentials
-    // The official Developer API only provides MQTT connection but doesn't allow topic subscriptions
-    // Real-time updates are handled via REST API polling instead
+    // Devices whose quota the REST API serves are polled; only the ones it refuses
+    // are subscribed over MQTT (subscribeQuota).
     if (!this.subscribedDevices.has(sn)) {
       this.subscribedDevices.add(sn);
     }

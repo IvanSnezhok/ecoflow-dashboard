@@ -5,6 +5,7 @@ import { getSupportedCommand, type DeviceAction } from "./deviceProfiles.js";
 import { bleBridge, mergeQuotas, CLOUD_BASE_FRESH_MS } from "./bleBridge.js";
 import { extraBatteries } from "./extraBatteries.js";
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
+import { mqttQuotas } from "./mqttQuota.js";
 
 interface ApiResponse<T> {
   code: string;
@@ -14,6 +15,11 @@ interface ApiResponse<T> {
 
 /** After a network failure, skip cloud reads this long while BLE carries the data. */
 const CLOUD_RETRY_MS = 30_000;
+
+/** The API's answer for a listed device it will not serve over REST, e.g. a shared one. */
+const REST_REFUSED = "1006";
+/** Such a device is read from its MQTT pushes; REST is retried this often in case access changed. */
+const REST_REFUSED_RETRY_MS = 10 * 60_000;
 
 interface DeviceListItem {
   sn: string;
@@ -26,7 +32,7 @@ interface DeviceListItem {
   bleOnline?: boolean;
 }
 
-export type DataSource = "cloud" | "ble" | "cloud+ble";
+export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt";
 
 interface DeviceQuota {
   soc: number;
@@ -55,6 +61,7 @@ class EcoflowApiClient {
   private cloudRefreshAttemptAt = new Map<string, number>();
   private cloudDownUntil = 0;
   private listFallbackReason: string | null = null;
+  private restRefused = new Map<string, { at: number; error: EcoflowApiError }>();
 
   constructor() {
     this.baseUrl = config.ecoflow.apiEndpoint;
@@ -202,8 +209,8 @@ class EcoflowApiClient {
   private async readQuota(sn: string): Promise<DeviceQuota> {
     const ble = bleBridge.freshQuota(sn);
     if (!ble) {
-      const quota = await this.getCloudQuota(sn);
-      this.dataSources.set(sn, "cloud");
+      const { quota, source } = await this.getServedQuota(sn);
+      this.dataSources.set(sn, source);
       return quota;
     }
 
@@ -216,8 +223,8 @@ class EcoflowApiClient {
 
     try {
       if (this.cloudDown) throw new Error("cloud unreachable, retrying shortly");
-      const quota = await this.getCloudQuota(sn);
-      this.dataSources.set(sn, "cloud");
+      const { quota, source } = await this.getServedQuota(sn);
+      this.dataSources.set(sn, source);
       return quota;
     } catch (error) {
       console.warn(`[EcoflowAPI] Cloud quota for ${sn} failed, using BLE: ${error instanceof Error ? error.message : error}`);
@@ -250,6 +257,39 @@ class EcoflowApiClient {
     this.getCloudQuota(sn)
       .catch(() => { /* BLE carries the data; the cloud may well be down */ })
       .finally(() => this.cloudRefreshInFlight.delete(sn));
+  }
+
+  /**
+   * The REST quota, or for a device whose REST reads the API refuses (code 1006, e.g.
+   * one shared from another account) the quota it pushes over MQTT (see mqttQuota.ts).
+   */
+  private async getServedQuota(sn: string): Promise<{ quota: DeviceQuota; source: "cloud" | "mqtt" }> {
+    const refused = this.restRefused.get(sn);
+    if (!refused || Date.now() - refused.at >= REST_REFUSED_RETRY_MS) {
+      try {
+        const quota = await this.getCloudQuota(sn);
+        if (refused) console.log(`[EcoflowAPI] REST quota for ${sn} is served again`);
+        this.restRefused.delete(sn);
+        return { quota, source: "cloud" };
+      } catch (error) {
+        if (error instanceof EcoflowApiError && error.code === REST_REFUSED) {
+          if (!refused) console.warn(`[EcoflowAPI] REST quota for ${sn} refused (${error.apiMessage}); reading its MQTT pushes`);
+          this.restRefused.set(sn, { at: Date.now(), error });
+          mqttQuotas.want(sn);
+        } else if (refused) {
+          // Already read from MQTT: a retry failing another way (e.g. no internet) changes nothing
+          refused.at = Date.now();
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    const pushed = mqttQuotas.fresh(sn);
+    if (pushed) return { quota: pushed as DeviceQuota, source: "mqtt" };
+    const { error } = this.restRefused.get(sn)!;
+    const note = mqttQuotas.lastMessageAt(sn) ? "MQTT pushes lack the battery level" : "no MQTT data yet";
+    throw new EcoflowApiError(error.code, `${error.apiMessage} (${note})`);
   }
 
   private async getCloudQuota(sn: string): Promise<DeviceQuota> {
