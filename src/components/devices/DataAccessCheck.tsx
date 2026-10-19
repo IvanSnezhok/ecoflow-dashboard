@@ -132,6 +132,14 @@ export function DataAccessCheck({ serialNumber }: { serialNumber: string }) {
             {running && <Loader2 className="w-3 h-3 animate-spin" />}
             {running ? 'Checking… about a minute' : report ? 'Run again' : 'Run check'}
           </button>
+          {/* The quota as the panel reads it plus recent raw MQTT messages, for troubleshooting */}
+          <a
+            href={`/api/devices/${serialNumber}/raw`}
+            download
+            className="px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted"
+          >
+            Download raw data
+          </a>
           <p className="flex-1 min-w-[16rem] text-[10px] leading-snug text-muted-foreground/70">
             Asks the EcoFlow Open API for this device's data on every channel it offers (full quota, named fields,
             MQTT), next to a working device for comparison. Read-only: it sends no commands.

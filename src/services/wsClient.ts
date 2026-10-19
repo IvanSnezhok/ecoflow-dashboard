@@ -77,7 +77,9 @@ class WebSocketClient {
 
     // MQTT pushes only the keys that changed (usually inside `params`); apply just
     // those, so a partial message never resets SOC or power to 0
-    const raw = (update.data.params ?? update.data) as Record<string, unknown>
+    // A get_reply (full snapshot) nests the values under data, or data.quotaMap
+    const reply = update.data.data as Record<string, unknown> | undefined
+    const raw = (update.data.params ?? reply?.quotaMap ?? reply ?? update.data) as Record<string, unknown>
     const num = (...keys: string[]) => {
       for (const key of keys) {
         const value = raw[key]

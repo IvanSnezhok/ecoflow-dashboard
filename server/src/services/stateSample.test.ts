@@ -13,6 +13,9 @@ assert.equal(full.solarInputWatts, 0);
 assert.equal(full.acOutputWatts, 250);
 assert.equal(full.bmsMasterVol, 52000);
 assert.equal(full.extraBattery1Soc, null);
+// Without the pd sums (the MQTT push of a shared DELTA Max) the battery's own power counts
+assert.equal(buildStateSample({ "bmsMaster.soc": 93, "bmsMaster.inputWatts": 0, "bmsMaster.outputWatts": 140 }).batteryWatts, -140);
+assert.equal(buildStateSample({ "bmsMaster.soc": 93 }).batteryWatts, null);
 
 // A partial quota (only one module answered) must not become a 0% sample.
 const partial = buildStateSample({ "bmsSlave1.fullCap": 80000, "bmsSlave1.remainCap": 40000, "bmsSlave1.vol": 51000 });

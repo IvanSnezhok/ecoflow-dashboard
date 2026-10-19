@@ -10,6 +10,7 @@ import { bleBridge } from "../services/bleBridge.js";
 import { extraBatteries, extraBatterySoc, hasExtraBattery } from "../services/extraBatteries.js";
 import { isDataAccessCheckRunning, runDataAccessCheck } from "../services/dataAccessProbe.js";
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
+import { mqttQuotas } from "../services/mqttQuota.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -155,9 +156,11 @@ router.get("/", async (_req: Request, res: Response) => {
               serialNumber: apiDevice.sn,
               batterySoc:
                 (q["pd.soc"] as number) || (q["bmsMaster.soc"] as number) || 0,
+              // The MQTT push of a REST-refused device has the battery's own power instead
               batteryWatts:
-                ((q["pd.wattsInSum"] as number) || 0) -
-                ((q["pd.wattsOutSum"] as number) || 0),
+                "pd.wattsInSum" in q || "pd.wattsOutSum" in q
+                  ? ((q["pd.wattsInSum"] as number) || 0) - ((q["pd.wattsOutSum"] as number) || 0)
+                  : ((q["bmsMaster.inputWatts"] as number) || 0) - ((q["bmsMaster.outputWatts"] as number) || 0),
               acInputWatts: (q["inv.inputWatts"] as number) || 0,
               solarInputWatts:
                 (q["mppt.inWatts"] as number) ||
@@ -448,6 +451,34 @@ router.post("/:sn/probe", async (req: Request, res: Response) => {
     insertLog(device.id, "API_CALL", "dataAccessCheck", null, null, false, message);
     res.status(500).json({ error: message });
   }
+});
+
+// Raw data download (Data access check card): the quota as the panel reads it and, for
+// a device read over MQTT, the latest raw message of each shape. Read-only.
+router.get("/:sn/raw", async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!getDeviceBySn(sn)) {
+    res.status(404).json({ error: "Device not found" });
+    return;
+  }
+  let quota: Record<string, unknown> | null = null;
+  let quotaError: string | null = null;
+  try {
+    const live = (await ecoflowApi.getDeviceQuota(sn)) as Record<string, unknown>;
+    quota = Object.fromEntries(Object.keys(live).sort().map((key) => [key, live[key]]));
+  } catch (error) {
+    quotaError = error instanceof Error ? error.message : String(error);
+  }
+  const takenAt = new Date().toISOString();
+  res.setHeader("Content-Disposition", `attachment; filename="${sn}-raw-${takenAt.slice(0, 19).replace(/:/g, "")}.json"`);
+  res.json({
+    serialNumber: sn,
+    takenAt,
+    dataSource: ecoflowApi.getDataSource(sn),
+    quotaError,
+    quota,
+    mqtt: mqttQuotas.diagnostics(sn),
+  });
 });
 
 // Control AC output

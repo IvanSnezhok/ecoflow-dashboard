@@ -58,6 +58,9 @@ function extraBattery(q: Record<string, unknown>, prefix: string) {
 export function buildStateSample(q: Record<string, unknown>): StateSample {
   const wattsIn = num(q["pd.wattsInSum"]);
   const wattsOut = num(q["pd.wattsOutSum"]);
+  // The MQTT push of a REST-refused device has the battery's own power instead
+  const bmsIn = num(q["bmsMaster.inputWatts"]);
+  const bmsOut = num(q["bmsMaster.outputWatts"]);
   const mpptAmp = num(q["mppt.inAmp"]);
   const mpptVol = num(q["mppt.inVol"]);
   const extra1 = extraBattery(q, "bmsSlave1");
@@ -65,7 +68,10 @@ export function buildStateSample(q: Record<string, unknown>): StateSample {
 
   return {
     batterySoc: soc(num(q["pd.soc"]) || num(q["bmsMaster.soc"])),
-    batteryWatts: wattsIn !== null || wattsOut !== null ? (wattsIn ?? 0) - (wattsOut ?? 0) : null,
+    batteryWatts:
+      wattsIn !== null || wattsOut !== null ? (wattsIn ?? 0) - (wattsOut ?? 0)
+        : bmsIn !== null || bmsOut !== null ? (bmsIn ?? 0) - (bmsOut ?? 0)
+          : null,
     acInputWatts: num(q["inv.inputWatts"]),
     solarInputWatts:
       num(q["mppt.inWatts"]) ??

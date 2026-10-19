@@ -8,6 +8,8 @@ interface EnergyFlowDiagramProps {
   batterySoc: number
   isCharging: boolean
   isDischarging: boolean
+  /** AC input feeds the AC output directly while the battery rests */
+  isBypass?: boolean
 }
 
 function FlowLine({
@@ -128,6 +130,7 @@ export function EnergyFlowDiagram({
   batterySoc,
   isCharging,
   isDischarging,
+  isBypass = false,
 }: EnergyFlowDiagramProps) {
   const totalInput = solarInput + acInput
   const netPower = totalInput - acOutput
@@ -140,13 +143,17 @@ export function EnergyFlowDiagram({
           <Zap className="w-3.5 h-3.5" />
           Energy Flow
         </h4>
-        <span className={cn(
-          'text-[10px] font-mono px-2 py-0.5 rounded-sm',
-          isCharging ? 'bg-energy-green/10 text-energy-green' :
-          isDischarging ? 'bg-energy-blue/10 text-energy-blue' :
-          'bg-muted text-muted-foreground'
-        )}>
-          {isCharging ? 'CHARGING' : isDischarging ? 'DISCHARGING' : 'STANDBY'}
+        <span
+          className={cn(
+            'text-[10px] font-mono px-2 py-0.5 rounded-sm',
+            isBypass ? 'bg-energy-purple/10 text-energy-purple' :
+            isCharging ? 'bg-energy-green/10 text-energy-green' :
+            isDischarging ? 'bg-energy-blue/10 text-energy-blue' :
+            'bg-muted text-muted-foreground'
+          )}
+          title={isBypass ? 'AC input powers the AC output directly; the battery is resting' : undefined}
+        >
+          {isBypass ? 'BYPASS' : isCharging ? 'CHARGING' : isDischarging ? 'DISCHARGING' : 'STANDBY'}
         </span>
       </div>
 
