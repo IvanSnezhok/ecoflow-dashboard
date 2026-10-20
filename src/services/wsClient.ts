@@ -9,12 +9,16 @@ class WebSocketClient {
   private maxReconnectAttempts = 10
   private reconnectDelay = 3000
   private handlers: Map<string, Set<MessageHandler>> = new Map()
+  /** Set by disconnect() (sign-out): a closed socket then stays closed */
+  private stopped = false
 
   connect(): void {
     // Also skip while a socket is still connecting: several components share this client
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return
     }
+    this.stopped = false
+    this.reconnectAttempts = 0
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.hostname
@@ -112,6 +116,7 @@ class WebSocketClient {
   }
 
   private scheduleReconnect(): void {
+    if (this.stopped) return
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnect attempts reached')
       return
@@ -125,6 +130,7 @@ class WebSocketClient {
   }
 
   disconnect(): void {
+    this.stopped = true
     if (this.ws) {
       this.ws.close()
       this.ws = null

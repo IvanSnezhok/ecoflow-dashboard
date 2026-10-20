@@ -10,6 +10,9 @@ import type {
   DataAccessReport,
   AppChannelStatus,
   AppRegion,
+  AuthStatus,
+  AuthSetupStart,
+  AuthSession,
 } from "@/types/device";
 import type {
   AutomationRule,
@@ -60,6 +63,10 @@ const client = axios.create({
 client.interceptors.response.use(
   (response) => response,
   (error) => {
+    // An expired or revoked session: the login screen takes over (components/auth)
+    if (error.response?.status === 401 && !String(error.config?.url ?? "").startsWith("/auth/")) {
+      window.dispatchEvent(new Event("auth:required"));
+    }
     if (error.response) {
       const message = error.response.data?.error || error.response.data?.message || "An error occurred";
       return Promise.reject(new Error(message));
@@ -74,6 +81,29 @@ client.interceptors.response.use(
 );
 
 export const api = {
+  getAuthStatus: () => client.get<AuthStatus>("/auth/status"),
+
+  authLogin: (username: string, password: string, otp: string, remember: boolean) =>
+    client.post<AuthStatus>("/auth/login", { username, password, otp, remember }),
+
+  authLogout: () => client.post<AuthStatus>("/auth/logout"),
+
+  authSetupStart: (setupSecret: string, username: string, password: string) =>
+    client.post<AuthSetupStart>("/auth/setup/start", { setupSecret, username, password }),
+
+  authSetupFinish: (setupId: string, otp: string, remember: boolean) =>
+    client.post<AuthStatus>("/auth/setup/finish", { setupId, otp, remember }),
+
+  authChangeStart: (current: { password: string; otp: string }, username: string, password: string) =>
+    client.post<AuthSetupStart>("/auth/change/start", { currentPassword: current.password, currentOtp: current.otp, username, password }),
+
+  authChangeFinish: (setupId: string, otp: string) =>
+    client.post<AuthStatus>("/auth/change/finish", { setupId, otp }),
+
+  getAuthSessions: () => client.get<AuthSession[]>("/auth/sessions"),
+
+  revokeOtherSessions: () => client.post<AuthSession[]>("/auth/sessions/revoke-others"),
+
   getDevices: () => client.get<DeviceWithState[]>("/devices"),
 
   getDevice: (serialNumber: string) =>

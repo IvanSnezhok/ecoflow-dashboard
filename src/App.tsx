@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MainLayout } from './components/layout/MainLayout'
 import { useDevices } from './hooks/useDevices'
+import { AuthGate } from './components/auth/AuthGate'
 
 // Heavy charts and page-specific dependencies are loaded only for the route the
 // operator opens, keeping the initial monitoring screen responsive on small hosts.
@@ -32,22 +33,24 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <DeviceLoader>
-          <MainLayout>
-            <Suspense fallback={<PageFallback />}>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/device/:serialNumber" element={<DeviceDetail />} />
-                <Route path="/device/:serialNumber/errors" element={<ErrorHistory />} />
-                <Route path="/statistics/:serialNumber" element={<Statistics />} />
-                <Route path="/automation" element={<Automation />} />
-                <Route path="/resilience" element={<Resilience />} />
-                <Route path="/logs" element={<Logs />} />
-                <Route path="/settings" element={<Settings />} />
-              </Routes>
-            </Suspense>
-          </MainLayout>
-        </DeviceLoader>
+        <AuthGate>
+          <DeviceLoader>
+            <MainLayout>
+              <Suspense fallback={<PageFallback />}>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/device/:serialNumber" element={<DeviceDetail />} />
+                  <Route path="/device/:serialNumber/errors" element={<ErrorHistory />} />
+                  <Route path="/statistics/:serialNumber" element={<Statistics />} />
+                  <Route path="/automation" element={<Automation />} />
+                  <Route path="/resilience" element={<Resilience />} />
+                  <Route path="/logs" element={<Logs />} />
+                  <Route path="/settings" element={<Settings />} />
+                </Routes>
+              </Suspense>
+            </MainLayout>
+          </DeviceLoader>
+        </AuthGate>
       </BrowserRouter>
     </QueryClientProvider>
   )
