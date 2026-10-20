@@ -7,6 +7,7 @@ import { CheckCircle, XCircle, RefreshCw, Wifi, Database, Server, Clock, Globe, 
 import { SlackSettings } from '@/components/automation/SlackSettings'
 import { BleAccountSettings } from '@/components/settings/BleAccountSettings'
 import { AppAccountSettings } from '@/components/settings/AppAccountSettings'
+import { PanelLoginSettings } from '@/components/settings/PanelLoginSettings'
 
 export default function Settings() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'error'>('checking')
@@ -266,6 +267,11 @@ export default function Settings() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Panel login: who is signed in, on which devices */}
+        <div className="rounded-lg border bg-card p-6 md:col-span-2">
+          <PanelLoginSettings />
         </div>
 
         {/* EcoFlow account for the Bluetooth channel */}

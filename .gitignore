@@ -35,6 +35,10 @@ server/data/*.db-wal
 # EcoFlow app channel sign-in token (services/appChannel.ts)
 server/data/app-account.json
 server/data/app-account.json.tmp
+# Panel login: password hash + authenticator secret, and the one-time setup code
+server/data/auth.json
+server/data/auth.json.tmp
+server/data/auth-setup-code.txt
 
 # Testing
 coverage

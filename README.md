@@ -16,6 +16,30 @@ npm run build:backend
 
 Serve the frontend `dist/` through a reverse proxy/static server and run `server/dist/index.js` under a supervisor. An example systemd unit is in `deploy/ecoflow-dashboard.service`.
 
+### Panel login
+
+Every page, API route (except `/api/auth` and `/api/health`) and the `/ws` live
+updates need a sign-in: username, password and a 6-digit code from an authenticator
+app (Google Authenticator, Aegis, 1Password…). **Remember me** keeps a device signed in
+for 30 days past its last use; without it the session ends with the browser (or after
+12 idle hours).
+
+On the first start after this login was added, the panel shows a setup screen. To prove
+the server is yours, enter either the one-time setup code from the server log or the
+`ECOFLOW_SECRET_KEY` from `.env`:
+
+```bash
+docker logs ecoflow-dashboard 2>&1 | grep "Setup code"   # also in server/data/auth-setup-code.txt
+```
+
+Then choose a username and password (10+ characters) and scan the QR code. The account
+lives in `server/data/auth.json` (password as a scrypt hash, the authenticator secret;
+mode 600, git-ignored) and sessions in the database. Settings → Panel login lists the
+signed-in devices and signs out this one or all others. Each code works once; sign-in
+and setup attempts are limited to 10 per 15 minutes per visitor (Cloudflare's
+`CF-Connecting-IP`). Lost the authenticator app? Delete `server/data/auth.json` and
+restart: everyone is signed out and the setup screen returns with a new setup code.
+
 ### In-panel GitHub updates
 
 This is deliberately disabled by default. The update endpoint can fetch code and restart the service, so do **not** expose it publicly without authentication/reverse-proxy protection.

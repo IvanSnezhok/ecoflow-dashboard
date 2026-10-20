@@ -35,6 +35,31 @@ export interface Device {
 // "app": the same, read in full through the EcoFlow app channel
 export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt" | "app";
 
+// Panel login (server/src/services/panelAuth.ts)
+export interface AuthStatus {
+  configured: boolean;
+  authenticated: boolean;
+  username: string | null;
+}
+
+export interface AuthSetupStart {
+  setupId: string;
+  secret: string;
+  otpauthUri: string;
+  /** data: URL of the QR code for the authenticator app */
+  qrCode: string;
+}
+
+export interface AuthSession {
+  id: string;
+  current: boolean;
+  remember: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+}
+
 // GET /api/app-account/status — mirrors server/src/services/appChannel.ts
 export type AppRegion = "api-e" | "api" | "api-a" | "api-j" | "api-r";
 

@@ -34,6 +34,8 @@ import systemRouter from "./routes/systemRoutes.js";
 import { resilienceRouter } from "./routes/resilience.js";
 import bleRouter from "./routes/ble.js";
 import appAccountRouter from "./routes/appAccount.js";
+import authRouter from "./routes/auth.js";
+import { panelAuth } from "./services/panelAuth.js";
 import { appChannel } from "./services/appChannel.js";
 import { redactBody } from "./lib/redact.js";
 import { processResilienceAutomation } from "./services/resilienceService.js";
@@ -43,6 +45,8 @@ const server = createServer(app);
 
 // Initialize database
 initDatabase();
+// Panel login: load the account before the first request, or print the setup code
+panelAuth.start();
 
 // Middleware
 app.use(
@@ -96,6 +100,30 @@ app.use("/api/app-account/login", rateLimit({
   max: 10, // each attempt is a real EcoFlow account login
   message: { error: "Too many login attempts, please wait" },
 }));
+// Panel login and setup. Behind the tunnel every request comes from the same address,
+// so the visitor's address from Cloudflare keys the limit.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => String(req.headers["cf-connecting-ip"] ?? req.ip),
+  message: { error: "Too many sign-in attempts, please wait 15 minutes" },
+});
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/setup", authLimiter);
+
+// The panel login (services/panelAuth.ts): /api/auth and /api/health stay open, every
+// other API route needs a session
+app.use("/api/auth", authRouter);
+
+// Health check
+app.get("/api/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    mqtt: mqttService.isConnected() ? "connected" : "disconnected",
+  });
+});
+
+app.use("/api", panelAuth.requireAuth);
 
 // Routes
 app.use("/api/devices", devicesRouter);
@@ -105,14 +133,6 @@ app.use("/api/system", systemRouter);
 app.use("/api/resilience", resilienceRouter);
 app.use("/api/ble", bleRouter);
 app.use("/api/app-account", appAccountRouter);
-
-// Health check
-app.get("/api/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    mqtt: mqttService.isConnected() ? "connected" : "disconnected",
-  });
-});
 
 // Serve static files from the frontend build
 const frontendDistPath = path.join(__dirname, "../../dist");
@@ -127,7 +147,12 @@ app.get("*", (req, res) => {
 });
 
 // WebSocket server for real-time updates
-const wss = new WebSocketServer({ server, path: "/ws" });
+// Live updates carry device data, so the socket needs a panel session too
+const wss = new WebSocketServer({
+  server,
+  path: "/ws",
+  verifyClient: (info, done) => (panelAuth.sessionFor(info.req) ? done(true) : done(false, 401, "Sign in required")),
+});
 const clients = new Set<WebSocket>();
 let backgroundCollectionInProgress = false;
 

@@ -1,4 +1,4 @@
-const SENSITIVE_KEY = /pass(word)?|secret|token/i;
+const SENSITIVE_KEY = /pass(word)?|secret|token|otp/i;
 
 /** Copy of a request body safe for logs: credential fields are masked. */
 export function redactBody(body: unknown): unknown {
