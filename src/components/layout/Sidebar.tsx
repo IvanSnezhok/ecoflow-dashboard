@@ -3,12 +3,16 @@ import { LayoutDashboard, FileText, Settings, Battery, Zap, Wifi, WifiOff, Radio
 import { cn } from '@/lib/utils'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { useMqtt } from '@/hooks/useMqtt'
+import { usePanelAccess } from '@/hooks/usePanelAccess'
 
-const navigation = [
+type Access = ReturnType<typeof usePanelAccess>
+
+// Pages an invited user cannot open are left out (the server refuses them anyway)
+const navigation: Array<{ name: string; href: string; icon: typeof Zap; show?: (access: Access) => boolean }> = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Automation', href: '/automation', icon: Zap },
-  { name: 'Power reserve', href: '/resilience', icon: ShieldCheck },
-  { name: 'Logs', href: '/logs', icon: FileText },
+  { name: 'Automation', href: '/automation', icon: Zap, show: (access) => access.isOwner },
+  { name: 'Power reserve', href: '/resilience', icon: ShieldCheck, show: (access) => access.powerReserve },
+  { name: 'Logs', href: '/logs', icon: FileText, show: (access) => access.isOwner },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
@@ -16,6 +20,7 @@ export function Sidebar({ className }: { className?: string }) {
   const location = useLocation()
   const { devices, isLoading } = useDeviceStore()
   const { wsConnected, mqttConnected } = useMqtt()
+  const access = usePanelAccess()
 
   // Calculate online devices count
   const onlineDevices = devices.filter(d => d.online && d.state)
@@ -24,7 +29,7 @@ export function Sidebar({ className }: { className?: string }) {
     <aside className={cn('w-56 shrink-0 border-r bg-card flex-col overflow-y-auto', className)}>
       {/* Navigation - Compact */}
       <nav className="p-3 space-y-0.5">
-        {navigation.map((item) => {
+        {navigation.filter((item) => !item.show || item.show(access)).map((item) => {
           const isActive = location.pathname === item.href
           return (
             <Link

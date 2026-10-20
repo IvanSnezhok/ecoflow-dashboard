@@ -29,12 +29,21 @@ import { DeviceInfoCard } from "@/components/devices/DeviceInfoCard";
 import { DataAccessCheck } from "@/components/devices/DataAccessCheck";
 import { collectDeviceIssues } from "@/utils/errorCodes";
 import type { ChartPeriod } from "@/types/device";
+import { usePanelAccess } from "@/hooks/usePanelAccess";
+
+function ViewOnly() {
+  return (
+    <span className="ml-auto text-[10px] font-mono uppercase tracking-wider text-muted-foreground">View only</span>
+  );
+}
 
 export default function DeviceDetail() {
   const { serialNumber } = useParams<{ serialNumber: string }>();
   const { devices, updateDeviceState, setPendingCommand, removePendingCommand } = useDeviceStore();
   const [isTogglingAc, setIsTogglingAc] = useState(false);
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("24h");
+  // A viewer sees the controls but cannot use them (the server refuses the commands too)
+  const { canControl } = usePanelAccess();
 
   // Charge settings states
   const [isSettingMaxSoc, setIsSettingMaxSoc] = useState(false);
@@ -307,6 +316,7 @@ export default function DeviceDetail() {
           <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
             <Power className="w-4 h-4 text-primary" />
             <span className="text-xs font-semibold uppercase tracking-wider">Controls</span>
+            {!canControl && <ViewOnly />}
           </div>
           <div className="p-4 space-y-4">
             {state ? (
@@ -322,7 +332,7 @@ export default function DeviceDetail() {
                   <TechnicalToggle
                     checked={state.acOutEnabled}
                     onChange={handleToggleAc}
-                    disabled={!device.online || isTogglingAc}
+                    disabled={!canControl || !device.online || isTogglingAc}
                     size="md"
                   />
                 </div>}
@@ -380,6 +390,7 @@ export default function DeviceDetail() {
           <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
             <Settings className="w-4 h-4 text-primary" />
             <span className="text-xs font-semibold uppercase tracking-wider">Charge Settings</span>
+            {!canControl && <ViewOnly />}
           </div>
           <div className="p-4">
             {state && (showChargePower || showChargeLimits) ? (
@@ -393,7 +404,7 @@ export default function DeviceDetail() {
                     step={100}
                     unit="W"
                     onChange={handleSetChargePower}
-                    disabled={!device.online || (device.capabilities !== undefined && device.capabilities.chargingPower === undefined) || !!state.fastChargingEnabled || isSettingChargePower}
+                    disabled={!canControl || !device.online || (device.capabilities !== undefined && device.capabilities.chargingPower === undefined) || !!state.fastChargingEnabled || isSettingChargePower}
                     accentColor="purple"
                   />
                   {state.fastChargingEnabled && (
@@ -411,7 +422,7 @@ export default function DeviceDetail() {
                   step={1}
                   unit="%"
                   onChange={handleSetMaxSoc}
-                  disabled={!device.online || device.capabilities?.chargeLimits === false || isSettingMaxSoc}
+                  disabled={!canControl || !device.online || device.capabilities?.chargeLimits === false || isSettingMaxSoc}
                   accentColor="green"
                 />
                 <TechnicalSlider
@@ -422,7 +433,7 @@ export default function DeviceDetail() {
                   step={1}
                   unit="%"
                   onChange={handleSetMinSoc}
-                  disabled={!device.online || device.capabilities?.chargeLimits === false || isSettingMinSoc}
+                  disabled={!canControl || !device.online || device.capabilities?.chargeLimits === false || isSettingMinSoc}
                   accentColor="blue"
                 />
                 </>}
@@ -504,7 +515,7 @@ export default function DeviceDetail() {
       <DeviceInfoCard serialNumber={device.serialNumber} online={device.online} />
 
       {/* Which EcoFlow channels serve this device's data, e.g. for a shared device */}
-      <DataAccessCheck key={device.serialNumber} serialNumber={device.serialNumber} />
+      {canControl && <DataAccessCheck key={device.serialNumber} serialNumber={device.serialNumber} />}
     </div>
   );
 }

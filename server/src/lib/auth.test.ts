@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { parseCookies } from "./cookies.js";
 import { hashPassword, verifyPassword } from "./password.js";
+import { canAccessDevice, canControl, isMemberRole, isOwner, parseDeviceList, type PanelUser } from "./permissions.js";
 import { base32Decode, base32Encode, generateTotpSecret, otpauthUri, totpAt, totpCounter, verifyTotp } from "./totp.js";
 
 // RFC 4648 base32
@@ -47,4 +48,30 @@ assert.equal(await verifyPassword("anything", "md5$abc"), false);
 
 assert.deepEqual(parseCookies("a=1; ecoflow_session=abc%3D%3D; broken; =x; b=%E0"), { a: "1", ecoflow_session: "abc==" });
 assert.deepEqual(parseCookies(undefined), {});
+
+// Roles: the owner sees and changes everything; invited users only their devices
+const owner: PanelUser = { id: "owner", username: "ivan", role: "owner", devices: null };
+const operator: PanelUser = { id: "a1", username: "olha", role: "operator", devices: ["DAEBZ5KF1182943"] };
+const viewer: PanelUser = { id: "b2", username: "petro", role: "viewer", devices: null };
+assert.equal(isOwner(owner), true);
+assert.equal(isOwner(operator), false);
+assert.equal(canAccessDevice(owner, "ANY0001"), true);
+assert.equal(canAccessDevice(operator, "DAEBZ5KF1182943"), true);
+assert.equal(canAccessDevice(operator, "DCABZ8ZE5130001"), false, "only the devices given");
+assert.equal(canAccessDevice(viewer, "DCABZ8ZE5130001"), true, "null = every device");
+assert.equal(canControl(owner), true);
+assert.equal(canControl(operator), true);
+assert.equal(canControl(viewer), false);
+assert.equal(isMemberRole("viewer"), true);
+assert.equal(isMemberRole("operator"), true);
+assert.equal(isMemberRole("owner"), false, "nobody is invited as owner");
+assert.equal(isMemberRole(undefined), false);
+
+assert.equal(parseDeviceList(null), null);
+assert.deepEqual(parseDeviceList(["DAEBZ5KF1182943", "DAEBZ5KF1182943", "DCABZ8ZE5130001"]), ["DAEBZ5KF1182943", "DCABZ8ZE5130001"]);
+assert.equal(parseDeviceList([]), undefined, "at least one device");
+assert.equal(parseDeviceList(undefined), undefined);
+assert.equal(parseDeviceList("DAEBZ5KF1182943"), undefined);
+assert.equal(parseDeviceList(["../etc"]), undefined);
+assert.equal(parseDeviceList([42]), undefined);
 console.log("Panel login tests passed");

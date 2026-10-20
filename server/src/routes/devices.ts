@@ -12,6 +12,7 @@ import { isDataAccessCheckRunning, runDataAccessCheck } from "../services/dataAc
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 import { mqttQuotas } from "../services/mqttQuota.js";
 import { appChannel, appQuotas } from "../services/appChannel.js";
+import { canAccessDevice, canControl } from "../lib/permissions.js";
 import {
   upsertDevice,
   getDeviceBySn,
@@ -28,6 +29,27 @@ import {
 } from "../db/database.js";
 
 const router = Router();
+
+// Invited users see only their devices, and a viewer sends no commands
+// (lib/permissions.ts). Every route here that is not a GET acts on a device.
+router.param("sn", (req, res, next, sn) => {
+  if (canAccessDevice(req.panelUser!, String(sn))) {
+    next();
+    return;
+  }
+  res.status(404).json({ error: "Device not found" });
+});
+
+router.use((req, res, next) => {
+  if (req.method === "GET" || canControl(req.panelUser!)) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: "View-only access: ask the panel owner for control" });
+});
+
+/** Who sent a command, for the operation log */
+const actor = (req: Request) => req.panelUser?.username ?? null;
 
 // Cache for API responses (to handle 1 req/sec polling without overloading Ecoflow API)
 interface DevicesCache {
@@ -50,11 +72,13 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 }
 
 // Get all devices with their latest state
-router.get("/", async (_req: Request, res: Response) => {
+router.get("/", async (req: Request, res: Response) => {
+  const visible = (devices: unknown[]) =>
+    devices.filter((device) => canAccessDevice(req.panelUser!, (device as { serialNumber: string }).serialNumber));
   try {
     // Return cached data if fresh
     if (devicesCache.data && Date.now() - devicesCache.timestamp < CACHE_TTL) {
-      return res.json(devicesCache.data);
+      return res.json(visible(devicesCache.data));
     }
 
     // Fetch devices from Ecoflow API
@@ -275,7 +299,7 @@ router.get("/", async (_req: Request, res: Response) => {
     // Update cache
     devicesCache = { data: devices, timestamp: Date.now() };
 
-    res.json(devices);
+    res.json(visible(devices));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     insertLog(null, "API_CALL", "getDevices", null, null, false, message);
@@ -365,7 +389,7 @@ router.post("/:sn/ble/pause", async (req: Request, res: Response) => {
   }
   try {
     await bleBridge.pause(req.params.sn, Math.round(minutes));
-    insertLog(null, "COMMAND", "blePause", JSON.stringify({ sn: req.params.sn, minutes }), JSON.stringify({ success: true }), true, null);
+    insertLog(null, "COMMAND", "blePause", JSON.stringify({ sn: req.params.sn, minutes, by: actor(req) }), JSON.stringify({ success: true }), true, null);
     res.json({ success: true });
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : "Unknown error" });
@@ -379,7 +403,7 @@ router.post("/:sn/ble/resume", async (req: Request, res: Response) => {
   }
   try {
     await bleBridge.resume(req.params.sn);
-    insertLog(null, "COMMAND", "bleResume", JSON.stringify({ sn: req.params.sn }), JSON.stringify({ success: true }), true, null);
+    insertLog(null, "COMMAND", "bleResume", JSON.stringify({ sn: req.params.sn, by: actor(req) }), JSON.stringify({ success: true }), true, null);
     res.json({ success: true });
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : "Unknown error" });
@@ -504,7 +528,7 @@ router.post("/:sn/ac-output", async (req: Request, res: Response) => {
       deviceId,
       "COMMAND",
       "setAcOutput",
-      JSON.stringify({ sn, enabled }),
+      JSON.stringify({ sn, enabled, by: actor(req) }),
       JSON.stringify({ success: true }),
       true,
       null,
@@ -521,7 +545,7 @@ router.post("/:sn/ac-output", async (req: Request, res: Response) => {
       device?.id || null,
       "COMMAND",
       "setAcOutput",
-      JSON.stringify({ sn: req.params.sn, enabled: req.body.enabled }),
+      JSON.stringify({ sn: req.params.sn, enabled: req.body.enabled, by: actor(req) }),
       null,
       false,
       message,
@@ -550,7 +574,7 @@ router.post("/:sn/dc-output", async (req: Request, res: Response) => {
       deviceId,
       "COMMAND",
       "setDcOutput",
-      JSON.stringify({ sn, enabled }),
+      JSON.stringify({ sn, enabled, by: actor(req) }),
       JSON.stringify({ success: true }),
       true,
       null,
@@ -567,7 +591,7 @@ router.post("/:sn/dc-output", async (req: Request, res: Response) => {
       device?.id || null,
       "COMMAND",
       "setDcOutput",
-      JSON.stringify({ sn: req.params.sn, enabled: req.body.enabled }),
+      JSON.stringify({ sn: req.params.sn, enabled: req.body.enabled, by: actor(req) }),
       null,
       false,
       message,
@@ -603,7 +627,7 @@ router.post("/:sn/charge-limit", async (req: Request, res: Response) => {
       deviceId,
       "COMMAND",
       "setChargeLimit",
-      JSON.stringify({ sn, maxSoc, minSoc }),
+      JSON.stringify({ sn, maxSoc, minSoc, by: actor(req) }),
       JSON.stringify({ success: true }),
       true,
       null,
@@ -620,7 +644,7 @@ router.post("/:sn/charge-limit", async (req: Request, res: Response) => {
       device?.id || null,
       "COMMAND",
       "setChargeLimit",
-      JSON.stringify({ sn: req.params.sn, ...req.body }),
+      JSON.stringify({ sn: req.params.sn, ...req.body, by: actor(req) }),
       null,
       false,
       message,
@@ -655,7 +679,7 @@ router.post("/:sn/max-charge-soc", async (req: Request, res: Response) => {
       deviceId,
       "COMMAND",
       "setMaxChargeSoc",
-      JSON.stringify({ sn, maxSoc }),
+      JSON.stringify({ sn, maxSoc, by: actor(req) }),
       JSON.stringify({ success: true }),
       true,
       null,
@@ -669,7 +693,7 @@ router.post("/:sn/max-charge-soc", async (req: Request, res: Response) => {
       device?.id || null,
       "COMMAND",
       "setMaxChargeSoc",
-      JSON.stringify({ sn: req.params.sn, ...req.body }),
+      JSON.stringify({ sn: req.params.sn, ...req.body, by: actor(req) }),
       null,
       false,
       message,
@@ -703,7 +727,7 @@ router.post("/:sn/min-discharge-soc", async (req: Request, res: Response) => {
       deviceId,
       "COMMAND",
       "setMinDischargeSoc",
-      JSON.stringify({ sn, minSoc }),
+      JSON.stringify({ sn, minSoc, by: actor(req) }),
       JSON.stringify({ success: true }),
       true,
       null,
@@ -717,7 +741,7 @@ router.post("/:sn/min-discharge-soc", async (req: Request, res: Response) => {
       device?.id || null,
       "COMMAND",
       "setMinDischargeSoc",
-      JSON.stringify({ sn: req.params.sn, ...req.body }),
+      JSON.stringify({ sn: req.params.sn, ...req.body, by: actor(req) }),
       null,
       false,
       message,
@@ -751,7 +775,7 @@ router.post("/:sn/charging-power", async (req: Request, res: Response) => {
       deviceId,
       "COMMAND",
       "setAcChargingPower",
-      JSON.stringify({ sn, watts }),
+      JSON.stringify({ sn, watts, by: actor(req) }),
       JSON.stringify({ success: true }),
       true,
       null,
@@ -765,7 +789,7 @@ router.post("/:sn/charging-power", async (req: Request, res: Response) => {
       device?.id || null,
       "COMMAND",
       "setAcChargingPower",
-      JSON.stringify({ sn: req.params.sn, ...req.body }),
+      JSON.stringify({ sn: req.params.sn, ...req.body, by: actor(req) }),
       null,
       false,
       message,

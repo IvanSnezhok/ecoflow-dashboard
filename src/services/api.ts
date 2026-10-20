@@ -13,6 +13,10 @@ import type {
   AuthStatus,
   AuthSetupStart,
   AuthSession,
+  InviteDetails,
+  MemberRole,
+  PanelInviteCreated,
+  PanelUsers,
 } from "@/types/device";
 import type {
   AutomationRule,
@@ -103,6 +107,30 @@ export const api = {
   getAuthSessions: () => client.get<AuthSession[]>("/auth/sessions"),
 
   revokeOtherSessions: () => client.post<AuthSession[]>("/auth/sessions/revoke-others"),
+
+  // Invitations: the token from the link goes in the body, never the URL
+  checkInvite: (token: string) => client.post<InviteDetails>("/auth/invite/check", { token }),
+
+  inviteStart: (token: string, username: string, password: string) =>
+    client.post<AuthSetupStart>("/auth/invite/start", { token, username, password }),
+
+  inviteFinish: (setupId: string, otp: string, remember: boolean) =>
+    client.post<AuthStatus>("/auth/invite/finish", { setupId, otp, remember }),
+
+  // Invited users (owner only)
+  getPanelUsers: () => client.get<PanelUsers>("/users"),
+
+  createInvite: (role: MemberRole, devices: string[] | null) =>
+    client.post<PanelInviteCreated>("/users/invites", { role, devices }),
+
+  revokeInvite: (id: string) => client.delete<PanelUsers>(`/users/invites/${encodeURIComponent(id)}`),
+
+  updatePanelUser: (id: string, changes: { role?: MemberRole; devices?: string[] | null }) =>
+    client.patch<PanelUsers>(`/users/${encodeURIComponent(id)}`, changes),
+
+  signOutPanelUser: (id: string) => client.post<PanelUsers>(`/users/${encodeURIComponent(id)}/sign-out`),
+
+  removePanelUser: (id: string) => client.delete<PanelUsers>(`/users/${encodeURIComponent(id)}`),
 
   getDevices: () => client.get<DeviceWithState[]>("/devices"),
 

@@ -8,12 +8,16 @@ import { SlackSettings } from '@/components/automation/SlackSettings'
 import { BleAccountSettings } from '@/components/settings/BleAccountSettings'
 import { AppAccountSettings } from '@/components/settings/AppAccountSettings'
 import { PanelLoginSettings } from '@/components/settings/PanelLoginSettings'
+import { PanelUsersSettings } from '@/components/settings/PanelUsersSettings'
+import { usePanelAccess } from '@/hooks/usePanelAccess'
 
 export default function Settings() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'error'>('checking')
   const [apiError, setApiError] = useState<string | null>(null)
   const { devices } = useDeviceStore()
   const { timezone, timeFormat, setTimezone, setTimeFormat } = useSettingsStore()
+  // Invited users get their own login and the display settings; the rest is the owner's
+  const { isOwner } = usePanelAccess()
 
   // System update state
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null)
@@ -107,9 +111,10 @@ export default function Settings() {
   }, [])
 
   useEffect(() => {
+    if (!isOwner) return
     checkApiConnection()
     checkForUpdates()
-  }, [checkForUpdates])
+  }, [checkForUpdates, isOwner])
 
   const getStatusColor = (status: 'checking' | 'connected' | 'error') => {
     switch (status) {
@@ -144,7 +149,7 @@ export default function Settings() {
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* API Configuration */}
-        <div className="rounded-lg border bg-card p-6">
+        {isOwner && <div className="rounded-lg border bg-card p-6">
           <div className="flex items-center gap-2 mb-4">
             <Server className="w-5 h-5" />
             <h3 className="font-semibold">API Configuration</h3>
@@ -179,10 +184,10 @@ export default function Settings() {
               Test Connection
             </button>
           </div>
-        </div>
+        </div>}
 
         {/* MQTT Status */}
-        <div className="rounded-lg border bg-card p-6">
+        {isOwner && <div className="rounded-lg border bg-card p-6">
           <div className="flex items-center gap-2 mb-4">
             <Wifi className="w-5 h-5" />
             <h3 className="font-semibold">MQTT Real-time Updates</h3>
@@ -210,7 +215,7 @@ export default function Settings() {
               </p>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* Time Settings */}
         <div className="rounded-lg border bg-card p-6">
@@ -272,6 +277,12 @@ export default function Settings() {
         {/* Panel login: who is signed in, on which devices */}
         <div className="rounded-lg border bg-card p-6 md:col-span-2">
           <PanelLoginSettings />
+        </div>
+
+        {isOwner && <>
+        {/* People invited to the panel, with their roles and devices */}
+        <div className="rounded-lg border bg-card p-6 md:col-span-2">
+          <PanelUsersSettings />
         </div>
 
         {/* EcoFlow account for the Bluetooth channel */}
@@ -490,6 +501,7 @@ export default function Settings() {
             </div>
           </div>
         </div>
+        </>}
       </div>
     </div>
   )

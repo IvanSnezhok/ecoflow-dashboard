@@ -5,7 +5,8 @@ import { api } from '@/services/api'
 import { ChangeCredentials } from '@/components/auth/AuthGate'
 import { wsClient } from '@/services/wsClient'
 import { useDeviceStore } from '@/stores/deviceStore'
-import type { AuthStatus } from '@/types/device'
+import { usePanelAccess } from '@/hooks/usePanelAccess'
+import { ROLE_COPY, devicesSummary } from '@/lib/panelRoles'
 
 const formatMoment = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -22,7 +23,7 @@ function deviceLabel(userAgent: string | null): string {
 
 export function PanelLoginSettings() {
   const queryClient = useQueryClient()
-  const status = queryClient.getQueryData<AuthStatus>(['authStatus'])
+  const { username, role, devices, isOwner } = usePanelAccess()
   const { data: sessions } = useQuery({
     queryKey: ['authSessions'],
     queryFn: async () => (await api.getAuthSessions()).data,
@@ -68,9 +69,15 @@ export function PanelLoginSettings() {
         <h3 className="font-semibold">Panel login</h3>
       </div>
       <p className="text-sm">
-        Signed in as <span className="font-medium">{status?.username ?? '…'}</span>, with a password and an
+        Signed in as <span className="font-medium">{username ?? '…'}</span>, with a password and an
         authenticator app.
       </p>
+      {role && !isOwner && (
+        <p className="text-sm">
+          Access: <span className="font-medium">{ROLE_COPY[role].label}</span> · {devicesSummary(devices)}.{' '}
+          <span className="text-muted-foreground">{ROLE_COPY[role].description}. The panel owner can change it.</span>
+        </p>
+      )}
 
       {sessions && sessions.length > 0 && (
         <div>
@@ -155,10 +162,17 @@ export function PanelLoginSettings() {
         )}
       </div>
 
-      <p className="text-[11px] text-muted-foreground">
-        Lost the authenticator app? Delete <code className="font-mono">server/data/auth.json</code> on the server and
-        restart the panel: it signs everyone out and offers the setup again, with a new setup code in the server log.
-      </p>
+      {isOwner ? (
+        <p className="text-[11px] text-muted-foreground">
+          Lost the authenticator app? Delete <code className="font-mono">server/data/auth.json</code> on the server and
+          restart the panel: it signs everyone out and offers the setup again, with a new setup code in the server log.
+          Invited users keep their logins.
+        </p>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          Lost the authenticator app? Ask the panel owner to remove your user and invite you again.
+        </p>
+      )}
     </div>
   )
 }

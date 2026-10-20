@@ -40,6 +40,9 @@ server/data/auth.json
 server/data/auth.json.tmp
 server/data/auth-setup-code.txt
 server/data/auth-seeded
+# Users invited to the panel: password hashes + authenticator secrets
+server/data/panel-users.json
+server/data/panel-users.json.tmp
 
 # Testing
 coverage

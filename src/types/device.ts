@@ -36,14 +36,62 @@ export interface Device {
 export type DataSource = "cloud" | "ble" | "cloud+ble" | "mqtt" | "app";
 
 // Panel login (server/src/services/panelAuth.ts)
+// Mirrors server/src/lib/permissions.ts: the owner manages the panel; invited users see
+// the devices they were given, and an operator also controls them
+export type PanelRole = "owner" | "operator" | "viewer";
+export type MemberRole = Exclude<PanelRole, "owner">;
+
 export interface AuthStatus {
   configured: boolean;
   authenticated: boolean;
   username: string | null;
+  role: PanelRole | null;
+  /** Serial numbers the user sees; null = every device */
+  devices: string[] | null;
   /** Signed in with the initial account: replace it before anything else */
   mustChange: boolean;
   /** Sign-in asks for an authenticator code (not for the initial account) */
   otpRequired: boolean;
+  /** The Power reserve page is open to this user */
+  powerReserve: boolean;
+}
+
+// GET /api/users (owner only)
+export interface PanelMember {
+  id: string;
+  username: string;
+  role: MemberRole;
+  devices: string[] | null;
+  createdAt: string;
+  /** Last use of any of the user's sessions; null when signed out everywhere */
+  lastSeenAt: string | null;
+  sessions: number;
+}
+
+export interface PanelInvite {
+  id: string;
+  role: MemberRole;
+  devices: string[] | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface PanelUsers {
+  members: PanelMember[];
+  invites: PanelInvite[];
+}
+
+/** POST /api/users/invites: the token for the link is in this answer only */
+export interface PanelInviteCreated {
+  invite: PanelInvite;
+  token: string;
+}
+
+/** POST /api/auth/invite/check: what an invitation link grants */
+export interface InviteDetails {
+  role: MemberRole;
+  devices: Array<{ serialNumber: string; name: string }> | null;
+  expiresAt: string;
 }
 
 export interface AuthSetupStart {
