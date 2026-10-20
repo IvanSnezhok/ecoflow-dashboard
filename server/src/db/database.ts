@@ -798,14 +798,6 @@ export function getAllAutomationRules(): AutomationRuleRow[] {
   `).all() as AutomationRuleRow[]
 }
 
-export function getEnabledAutomationRules(): AutomationRuleRow[] {
-  return db.prepare(`
-    SELECT * FROM automation_rules
-    WHERE enabled = 1
-    ORDER BY priority DESC, created_at ASC
-  `).all() as AutomationRuleRow[]
-}
-
 export function getAutomationRuleById(id: number): AutomationRuleRow | undefined {
   return db.prepare(`
     SELECT * FROM automation_rules WHERE id = ?

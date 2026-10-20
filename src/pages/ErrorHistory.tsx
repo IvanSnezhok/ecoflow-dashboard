@@ -52,13 +52,11 @@ const ERROR_TYPE_COLORS: Record<ErrorType, string> = {
 
 export default function ErrorHistory() {
   const { serialNumber } = useParams<{ serialNumber: string }>()
-  const { devices } = useDeviceStore()
+  const device = useDeviceStore((s) => s.devices.find((d) => d.serialNumber === serialNumber))
   const [errors, setErrors] = useState<ErrorHistoryEntry[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filterType, setFilterType] = useState<ErrorType | 'all'>('all')
-
-  const device = devices.find((d) => d.serialNumber === serialNumber)
 
   const fetchErrors = async () => {
     if (!serialNumber) return

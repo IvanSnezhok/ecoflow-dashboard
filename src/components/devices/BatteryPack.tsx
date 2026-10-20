@@ -3,6 +3,7 @@ import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle, CheckCircle
 import type { ExtraBatteryState } from '@/types/device'
 import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
 import { getErrorInfo } from '@/utils/errorCodes'
+import { socBgColor, socTextColor } from '@/lib/deviceStatus'
 
 // Capacity of a DELTA Pro and its Smart Extra Battery in Wh
 const BATTERY_CAPACITY_WH = 3600
@@ -66,18 +67,6 @@ function BatteryUnit({
   isMain = false,
   heldSince,
 }: BatteryUnitProps) {
-  const getBatteryColor = () => {
-    if (soc <= 20) return 'bg-energy-red'
-    if (soc <= 40) return 'bg-energy-yellow'
-    return 'bg-energy-green'
-  }
-
-  const getTextColor = () => {
-    if (soc <= 20) return 'text-energy-red'
-    if (soc <= 40) return 'text-energy-yellow'
-    return 'text-energy-green'
-  }
-
   // errCode 6 = fully charged, 23 = charged to the user's limit: status, not an error
   const errInfo = errCode ? getErrorInfo(errType, errCode) : null
   const hasError = errInfo !== null && errInfo.severity !== 'info'
@@ -155,7 +144,7 @@ function BatteryUnit({
           <div
             className={cn(
               'absolute inset-y-0 left-0 transition-all duration-500',
-              getBatteryColor(),
+              socBgColor(soc),
               isCharging && 'animate-pulse'
             )}
             style={{ width: `${soc}%` }}
@@ -170,7 +159,7 @@ function BatteryUnit({
           </div>
         </div>
         {/* Percentage */}
-        <span className={cn('font-mono text-sm font-bold tabular-nums w-12 text-right', getTextColor())}>
+        <span className={cn('font-mono text-sm font-bold tabular-nums w-12 text-right', socTextColor(soc))}>
           {soc}%
         </span>
       </div>
@@ -178,19 +167,19 @@ function BatteryUnit({
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2 text-[10px]">
         {temp !== undefined && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" title="Temperature">
             <Thermometer className="w-3 h-3 text-energy-yellow" />
             <span className="font-mono">{temp}°</span>
           </div>
         )}
         {cycles !== undefined && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" title="Charge cycles">
             <RefreshCw className="w-3 h-3 text-energy-purple" />
             <span className="font-mono">{cycles}</span>
           </div>
         )}
         {soh !== undefined && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" title="State of health">
             <Heart className={cn(
               'w-3 h-3',
               soh >= 90 ? 'text-energy-green' : soh >= 70 ? 'text-energy-yellow' : 'text-energy-red'
@@ -199,7 +188,7 @@ function BatteryUnit({
           </div>
         )}
         {voltage !== undefined && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" title="Voltage">
             <Zap className="w-3 h-3 text-energy-blue" />
             <span className="font-mono">{(voltage / 1000).toFixed(1)}V</span>
           </div>
@@ -219,10 +208,8 @@ export function BatteryPack({
   extraBattery1,
   extraBattery2,
 }: BatteryPackProps) {
-  // Calculate battery Wh based on SOC and fixed capacity (3600Wh for all EcoFlow batteries)
   const mainRemainingWh = calculateWhFromSoc(mainSoc, mainCapacityWh)
 
-  // Calculate extra batteries Wh based on SOC (all have 3600Wh capacity)
   const extra1RemainingWh = extraBattery1 ? calculateWhFromSoc(extraBattery1.soc, extraBatteryCapacityWh) : 0
   const extra2RemainingWh = extraBattery2 ? calculateWhFromSoc(extraBattery2.soc, extraBatteryCapacityWh) : 0
 
@@ -266,63 +253,48 @@ export function BatteryPack({
     },
   ].filter(Boolean) as BatteryUnitProps[]
 
-  // Calculate totals
-  const totalSoc = batteries.reduce((sum, b) => sum + b.soc, 0)
-  const avgSoc = Math.round(totalSoc / batteries.length)
   const totalRemainingWh = mainRemainingWh + extra1RemainingWh + extra2RemainingWh
   const totalCapacityWh = mainCapacityWh + (extraBattery1 ? extraBatteryCapacityWh : 0) + (extraBattery2 ? extraBatteryCapacityWh : 0)
+  const totalSoc = Math.round((totalRemainingWh / totalCapacityWh) * 100)
 
   return (
     <div className="rounded-sm border bg-card overflow-hidden">
-      {/* Header */}
+      {/* Header: stored energy across all packs */}
       <div className="px-4 py-3 border-b bg-muted/30 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Battery className="w-4 h-4 text-primary" />
           <span className="text-xs font-semibold uppercase tracking-wider">Battery Pack</span>
         </div>
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-muted-foreground">{batteries.length} units</span>
-          <span className="font-mono font-bold text-foreground">
-            {avgSoc}%
-          </span>
-        </div>
+        <span className="text-sm font-mono font-bold text-foreground">
+          {totalRemainingWh.toLocaleString()}
+          <span className="text-muted-foreground text-[10px]">Wh</span>
+          <span className="text-muted-foreground text-[10px]"> / {totalCapacityWh.toLocaleString()}</span>
+        </span>
       </div>
 
-      {/* Total Capacity Bar */}
-      <div className="px-4 py-3 border-b border-border/50">
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-            Total Capacity
-          </span>
-          <span className="text-sm font-mono font-bold text-foreground">
-            {totalRemainingWh.toLocaleString()}
-            <span className="text-muted-foreground text-[10px]">Wh</span>
-            <span className="text-muted-foreground text-[10px]"> / {totalCapacityWh.toLocaleString()}</span>
-          </span>
-        </div>
-        <div className="relative h-3 rounded-sm bg-muted overflow-hidden">
-          <div
-            className={cn(
-              'absolute inset-y-0 left-0 transition-all duration-500',
-              avgSoc <= 20 ? 'bg-energy-red' : avgSoc <= 40 ? 'bg-energy-yellow' : 'bg-energy-green'
-            )}
-            style={{ width: `${avgSoc}%` }}
-          />
-          {/* Dividers showing individual batteries */}
-          {batteries.length > 1 && batteries.slice(0, -1).map((_, i) => (
+      {/* With extra batteries: the combined level, divided per pack */}
+      {batteries.length > 1 && (
+        <div className="px-4 pt-3">
+          <div className="relative h-2 rounded-sm bg-muted overflow-hidden" title={`${totalSoc}% across ${batteries.length} packs`}>
             <div
-              key={i}
-              className="absolute top-0 bottom-0 w-0.5 bg-card"
-              style={{ left: `${((i + 1) / batteries.length) * 100}%` }}
+              className={cn('absolute inset-y-0 left-0 transition-all duration-500', socBgColor(totalSoc))}
+              style={{ width: `${totalSoc}%` }}
             />
-          ))}
+            {batteries.slice(0, -1).map((_, i) => (
+              <div
+                key={i}
+                className="absolute top-0 bottom-0 w-0.5 bg-card"
+                style={{ left: `${((i + 1) / batteries.length) * 100}%` }}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Individual Battery Units */}
+      {/* Individual Battery Units; a single pack's energy is already in the header */}
       <div className="p-3 space-y-2">
         {batteries.map((battery, i) => (
-          <BatteryUnit key={i} {...battery} />
+          <BatteryUnit key={i} {...battery} remainingWh={batteries.length > 1 ? battery.remainingWh : undefined} />
         ))}
       </div>
     </div>

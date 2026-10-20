@@ -10,8 +10,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import type { HistoryDataPoint, ChartPeriod, DateRange } from '@/types/device'
-import { chartColors, formatTimestamp } from './chartConfig'
-import { useSettingsStore } from '@/stores/settingsStore'
+import { chartColors, cursorProps, gridProps, axisProps, xAxisProps, useTimeTickFormatter, useTooltipTime } from './chartConfig'
 
 interface BatteryChartProps {
   data: HistoryDataPoint[]
@@ -20,29 +19,19 @@ interface BatteryChartProps {
   customRange?: DateRange | null
 }
 
-// Custom tooltip component with timezone support
-function CustomTooltip({ active, payload, label }: any) {
-  const { timezone, timeFormat } = useSettingsStore()
-
-  if (!active || !payload || !payload.length) return null
-
-  const value = payload[0]?.value
-  if (value === null || value === undefined) return null
+function CustomTooltip({ active, payload, label }: {
+  active?: boolean
+  payload?: { value: number | null }[]
+  label?: string
+}) {
+  const time = useTooltipTime(label)
+  const value = payload?.[0]?.value
+  if (!active || value === null || value === undefined) return null
   const color = value <= 20 ? '#EF4444' : value <= 40 ? '#F59E0B' : '#10B981'
-  const hour12 = timeFormat === '12h'
 
   return (
     <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[120px]">
-      <p className="text-[10px] text-muted-foreground font-mono mb-1">
-        {new Date(label).toLocaleString('en-US', {
-          timeZone: timezone,
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12
-        })}
-      </p>
+      <p className="text-[10px] text-muted-foreground font-mono mb-1">{time}</p>
       <div className="flex items-center gap-2">
         <span
           className="w-2 h-2 rounded-sm"
@@ -56,74 +45,38 @@ function CustomTooltip({ active, payload, label }: any) {
 }
 
 export const BatteryChart = memo(function BatteryChart({ data, period, height = 200, customRange }: BatteryChartProps) {
-  // Subscribe to settings store to re-render when timezone changes
-  const { timezone, timeFormat } = useSettingsStore()
-
-  // Calculate custom range duration in hours
-  const customRangeDurationHours = useMemo(() => {
-    if (period !== 'custom' || !customRange) return undefined
-    const from = new Date(customRange.from).getTime()
-    const to = new Date(customRange.to).getTime()
-    return (to - from) / (1000 * 60 * 60)
-  }, [period, customRange])
-
-  // Memoize the tick formatter to use current settings
-  const tickFormatter = useMemo(() => {
-    return (value: string) => formatTimestamp(value, period, customRangeDurationHours)
-  }, [period, customRangeDurationHours, timezone, timeFormat])
+  const tickFormatter = useTimeTickFormatter(period, customRange)
 
   // Calculate average for reference line
-  const validData = data.filter(p => p.batterySoc !== null)
-  const avgSoc = validData.length > 0
-    ? Math.round(validData.reduce((sum, p) => sum + (p.batterySoc || 0), 0) / validData.length)
-    : null
+  const avgSoc = useMemo(() => {
+    const values = data.filter((p) => p.batterySoc !== null)
+    return values.length > 0
+      ? Math.round(values.reduce((sum, p) => sum + (p.batterySoc || 0), 0) / values.length)
+      : null
+  }, [data])
 
   return (
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 10, right: 18, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="socGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
-            <stop offset="95%" stopColor="#10B981" stopOpacity={0.02} />
+            <stop offset="5%" stopColor={chartColors.batterySoc} stopOpacity={0.3} />
+            <stop offset="95%" stopColor={chartColors.batterySoc} stopOpacity={0.02} />
           </linearGradient>
         </defs>
 
-        {/* Dotted grid */}
-        <CartesianGrid
-          strokeDasharray="2 4"
-          stroke={chartColors.grid}
-          vertical={false}
-          strokeOpacity={0.7}
-        />
-
-        <XAxis
-          dataKey="timestamp"
-          tickFormatter={tickFormatter}
-          stroke={chartColors.text}
-          fontSize={10}
-          fontFamily="JetBrains Mono, monospace"
-          tickLine={false}
-          axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
-          dy={5}
-          interval="preserveStartEnd"
-          minTickGap={40}
-        />
+        <CartesianGrid {...gridProps} />
+        <XAxis {...xAxisProps} tickFormatter={tickFormatter} />
         <YAxis
+          {...axisProps}
           domain={[0, 100]}
           tickFormatter={(value) => `${value}%`}
-          stroke={chartColors.text}
-          fontSize={10}
-          fontFamily="JetBrains Mono, monospace"
-          tickLine={false}
           axisLine={false}
           width={38}
           ticks={[0, 25, 50, 75, 100]}
         />
 
-        <Tooltip
-          content={<CustomTooltip />}
-          cursor={{ stroke: chartColors.text, strokeWidth: 1, strokeDasharray: '4 4' }}
-        />
+        <Tooltip content={<CustomTooltip />} cursor={cursorProps} />
 
         {/* Average reference line */}
         {avgSoc !== null && (
@@ -153,7 +106,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
         <Area
           type="monotone"
           dataKey="batterySoc"
-          stroke={chartColors.batterySoc.stroke}
+          stroke={chartColors.batterySoc}
           fill="url(#socGradient)"
           strokeWidth={2}
           // Short holes are already bridged in useChartData; what is left is a real gap
@@ -162,7 +115,7 @@ export const BatteryChart = memo(function BatteryChart({ data, period, height = 
           dot={false}
           activeDot={{
             r: 4,
-            fill: chartColors.batterySoc.stroke,
+            fill: chartColors.batterySoc,
             stroke: '#fff',
             strokeWidth: 2
           }}

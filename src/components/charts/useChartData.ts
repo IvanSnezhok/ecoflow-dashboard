@@ -114,7 +114,7 @@ function removeSocSpikes(points: HistoryDataPoint[]): void {
  * quota). Carry the previous reading forward so lines don't flicker; across a real
  * gap insert empty points so the line breaks honestly.
  */
-export function prepareChartData(rawPoints: HistoryDataPoint[], aggregation: string): HistoryDataPoint[] {
+function prepareChartData(rawPoints: HistoryDataPoint[], aggregation: string): HistoryDataPoint[] {
   const points = rawPoints.map((p) => ({
     ...p,
     timestamp: new Date(parseServerTimestamp(p.timestamp)).toISOString(),

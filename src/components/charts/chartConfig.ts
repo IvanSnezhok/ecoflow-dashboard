@@ -1,44 +1,20 @@
+import { useMemo } from 'react'
 import { useSettingsStore, type TimeFormat } from '@/stores/settingsStore'
+import type { ChartPeriod, DateRange } from '@/types/device'
 
-// Chart colors and configuration - using energy design system
+// Chart colors - using energy design system
 export const chartColors = {
-  batterySoc: {
-    stroke: '#10B981', // energy-green
-    fill: 'url(#socGradient)',
-  },
-  batteryWatts: {
-    stroke: '#3B82F6', // energy-blue
-  },
-  acInput: {
-    stroke: '#A855F7', // energy-purple
-  },
-  solarInput: {
-    stroke: '#F59E0B', // energy-yellow
-  },
-  acOutput: {
-    stroke: '#3B82F6', // energy-blue
-  },
-  dcOutput: {
-    stroke: '#06b6d4', // cyan (secondary)
-  },
-  temperature: {
-    stroke: '#F59E0B', // energy-yellow
-  },
-  // New colors for detailed charts
-  voltage: {
-    stroke: '#3B82F6', // energy-blue
-  },
-  extraBattery1: {
-    stroke: '#10B981', // energy-green
-  },
-  extraBattery2: {
-    stroke: '#A855F7', // energy-purple
-  },
-  // Grid and text colors
+  batterySoc: '#10B981', // energy-green
+  acInput: '#A855F7', // energy-purple
+  solarInput: '#F59E0B', // energy-yellow
+  acOutput: '#3B82F6', // energy-blue
+  dcOutput: '#06b6d4', // cyan (secondary)
+  temperature: '#F59E0B', // energy-yellow
+  voltage: '#3B82F6', // energy-blue
+  extraBattery1: '#10B981', // energy-green
+  extraBattery2: '#A855F7', // energy-purple
   grid: '#E2E8F0', // blueprint style grid
-  gridDark: '#334155',
   text: '#64748B', // text secondary
-  textDark: '#94A3B8',
 }
 
 export const periodLabels: Record<string, string> = {
@@ -60,91 +36,32 @@ export const periodShortLabels: Record<string, string> = {
   'custom': 'Custom',
 }
 
-// Legacy function for backward compatibility (uses store internally)
-export const formatTimestamp = (timestamp: string, period: string, customRangeDurationHours?: number): string => {
-  const { timezone, timeFormat } = useSettingsStore.getState()
-  return formatTimestampWithSettings(timestamp, period, timezone, timeFormat, customRangeDurationHours)
-}
-
-// Pure function for use in components with settings passed explicitly
-export const formatTimestampWithSettings = (
+/** X-axis label for a period; a custom range picks the format from its length */
+function formatTick(
   timestamp: string,
   period: string,
   timezone: string,
   timeFormat: TimeFormat,
   customRangeDurationHours?: number
-): string => {
+): string {
   const date = new Date(timestamp)
   const hour12 = timeFormat === '12h'
+  const scale =
+    period !== 'custom' ? period
+      : customRangeDurationHours === undefined ? 'custom'
+        : customRangeDurationHours <= 24 ? '24h'
+          : customRangeDurationHours <= 168 ? '7d'
+            : '30d'
 
-  switch (period) {
+  switch (scale) {
     case '10m':
     case '1h':
     case '24h':
-      return date.toLocaleTimeString('en-US', {
-        timeZone: timezone,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12,
-      })
+      return date.toLocaleTimeString('en-US', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12 })
     case '7d':
-      return date.toLocaleDateString('en-US', {
-        timeZone: timezone,
-        weekday: 'short',
-        hour: '2-digit',
-        hour12,
-      })
+      return date.toLocaleDateString('en-US', { timeZone: timezone, weekday: 'short', hour: '2-digit', hour12 })
     case '30d':
-      return date.toLocaleDateString('en-US', {
-        timeZone: timezone,
-        day: 'numeric',
-        month: 'short',
-      })
-    case 'custom':
-      // For custom range, adapt format based on duration
-      if (customRangeDurationHours !== undefined) {
-        if (customRangeDurationHours <= 2) {
-          // Very short: only time HH:MM
-          return date.toLocaleTimeString('en-US', {
-            timeZone: timezone,
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12,
-          })
-        } else if (customRangeDurationHours <= 24) {
-          // Up to 1 day: HH:MM
-          return date.toLocaleTimeString('en-US', {
-            timeZone: timezone,
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12,
-          })
-        } else if (customRangeDurationHours <= 168) {
-          // Up to 1 week: Day HH:MM
-          return date.toLocaleDateString('en-US', {
-            timeZone: timezone,
-            weekday: 'short',
-            hour: '2-digit',
-            hour12,
-          })
-        } else {
-          // Longer: Month Day
-          return date.toLocaleDateString('en-US', {
-            timeZone: timezone,
-            day: 'numeric',
-            month: 'short',
-          })
-        }
-      }
-      // Fallback for custom without duration info
-      return date.toLocaleString('en-US', {
-        timeZone: timezone,
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12,
-      })
+      return date.toLocaleDateString('en-US', { timeZone: timezone, day: 'numeric', month: 'short' })
     default:
       return date.toLocaleString('en-US', {
         timeZone: timezone,
@@ -156,3 +73,62 @@ export const formatTimestampWithSettings = (
       })
   }
 }
+
+/** Tick formatter for the time axis, following the timezone and 12/24 h settings */
+export function useTimeTickFormatter(period: ChartPeriod, customRange?: DateRange | null) {
+  const timezone = useSettingsStore((s) => s.timezone)
+  const timeFormat = useSettingsStore((s) => s.timeFormat)
+  return useMemo(() => {
+    const hours = period === 'custom' && customRange
+      ? (new Date(customRange.to).getTime() - new Date(customRange.from).getTime()) / 3_600_000
+      : undefined
+    return (value: string) => formatTick(value, period, timezone, timeFormat, hours)
+  }, [period, customRange, timezone, timeFormat])
+}
+
+/** The moment a tooltip describes, e.g. "Oct 20, 14:30" */
+export function useTooltipTime(label: string | undefined): string {
+  const timezone = useSettingsStore((s) => s.timezone)
+  const timeFormat = useSettingsStore((s) => s.timeFormat)
+  if (!label) return ''
+  return new Date(label).toLocaleString('en-US', {
+    timeZone: timezone,
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: timeFormat === '12h',
+  })
+}
+
+// Shared look of the axes and grid
+export const axisProps = {
+  stroke: chartColors.text,
+  fontSize: 10,
+  fontFamily: 'JetBrains Mono, monospace',
+  tickLine: false,
+} as const
+
+export const xAxisProps = {
+  ...axisProps,
+  dataKey: 'timestamp',
+  axisLine: { stroke: chartColors.grid, strokeWidth: 1 },
+  dy: 5,
+  interval: 'preserveStartEnd',
+  minTickGap: 40,
+} as const
+
+export const gridProps = {
+  strokeDasharray: '2 4',
+  stroke: chartColors.grid,
+  vertical: false,
+  strokeOpacity: 0.7,
+} as const
+
+export const cursorProps = { stroke: chartColors.text, strokeWidth: 1, strokeDasharray: '4 4' } as const
+
+export const legendProps = {
+  wrapperStyle: { fontSize: '10px', fontFamily: 'JetBrains Mono, monospace' },
+  iconType: 'square',
+  iconSize: 8,
+} as const

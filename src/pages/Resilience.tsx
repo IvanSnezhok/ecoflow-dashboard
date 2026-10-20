@@ -72,7 +72,7 @@ const inputClass = 'w-full h-9 rounded-sm border bg-background px-2.5 text-xs fo
 const optionLabel = (option: YasnoAddressOption) => option.name ?? option.value ?? option.label ?? `#${option.id}`
 
 export default function Resilience() {
-  const { devices } = useDeviceStore()
+  const devices = useDeviceStore((s) => s.devices)
   // Invited users read this page when its device is theirs; the settings are the owner's
   const { isOwner } = usePanelAccess()
   const readOnly = !isOwner

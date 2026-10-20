@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Loader2, Stethoscope } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { Row } from '@/components/devices/DeviceInfoCard'
@@ -138,70 +138,59 @@ export function DataAccessCheck({ serialNumber }: { serialNumber: string }) {
   const verdict = report ? VERDICTS[report.verdict] : null
 
   return (
-    <div className="rounded-sm border bg-card overflow-hidden">
-      <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
-        <Stethoscope className="w-4 h-4 text-primary" />
-        <span className="text-xs font-semibold uppercase tracking-wider">Data access check</span>
-        {report && !running && (
-          <span className="ml-auto text-[10px] text-muted-foreground">
-            as of {new Date(report.checkedAt).toLocaleString()}
-          </span>
-        )}
+    <div className="p-4 space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={running}
+          onClick={() => void run()}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+        >
+          {running && <Loader2 className="w-3 h-3 animate-spin" />}
+          {running ? 'Checking… about a minute' : report ? 'Run again' : 'Run check'}
+        </button>
+        {/* The quota as the panel reads it plus recent raw MQTT messages, for troubleshooting */}
+        <a
+          href={`/api/devices/${serialNumber}/raw`}
+          download
+          className="px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted"
+        >
+          Download raw data
+        </a>
+        <p className="flex-1 min-w-[12rem] text-[10px] leading-snug text-muted-foreground/70">
+          {report && !running
+            ? `Checked ${new Date(report.checkedAt).toLocaleString()}`
+            : 'Reads every Open API channel next to a working device. Sends no commands.'}
+        </p>
       </div>
 
-      <div className="p-4 space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={running}
-            onClick={() => void run()}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+      {error && <p className="text-xs text-energy-red">{error}</p>}
+
+      {report && verdict && (
+        <>
+          <p
+            className={cn(
+              'rounded-sm border px-3 py-2 text-xs leading-snug',
+              verdict.tone === 'good' && 'border-energy-green/40 bg-energy-green/5',
+              verdict.tone === 'warn' && 'border-energy-yellow/40 bg-energy-yellow/5',
+              verdict.tone === 'bad' && 'border-energy-red/40 bg-energy-red/5',
+            )}
           >
-            {running && <Loader2 className="w-3 h-3 animate-spin" />}
-            {running ? 'Checking… about a minute' : report ? 'Run again' : 'Run check'}
-          </button>
-          {/* The quota as the panel reads it plus recent raw MQTT messages, for troubleshooting */}
-          <a
-            href={`/api/devices/${serialNumber}/raw`}
-            download
-            className="px-2 py-1 rounded-sm border text-[11px] font-medium hover:bg-muted"
-          >
-            Download raw data
-          </a>
-          <p className="flex-1 min-w-[16rem] text-[10px] leading-snug text-muted-foreground/70">
-            Asks the EcoFlow Open API for this device's data on every channel it offers (full quota, named fields,
-            MQTT), next to a working device for comparison. Read-only: it sends no commands.
+            {verdict.text(report)}
           </p>
-        </div>
-
-        {error && <p className="text-xs text-energy-red">{error}</p>}
-
-        {report && verdict && (
-          <>
-            <p
-              className={cn(
-                'rounded-sm border px-3 py-2 text-xs leading-snug',
-                verdict.tone === 'good' && 'border-energy-green/40 bg-energy-green/5',
-                verdict.tone === 'warn' && 'border-energy-yellow/40 bg-energy-yellow/5',
-                verdict.tone === 'bad' && 'border-energy-red/40 bg-energy-red/5',
-              )}
-            >
-              {verdict.text(report)}
-            </p>
-            {report.mqttError && <p className="text-xs text-energy-red">MQTT: {report.mqttError}</p>}
-            <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
-              <ProbeColumn probe={report.target} role="this device" listenSeconds={report.listenSeconds} />
-              {report.comparison ? (
-                <ProbeColumn probe={report.comparison} role="comparison" listenSeconds={report.listenSeconds} />
-              ) : (
-                <p className="text-[10px] text-muted-foreground/70">
-                  No other online, supported device to compare against.
-                </p>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+          {report.mqttError && <p className="text-xs text-energy-red">MQTT: {report.mqttError}</p>}
+          <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
+            <ProbeColumn probe={report.target} role="this device" listenSeconds={report.listenSeconds} />
+            {report.comparison ? (
+              <ProbeColumn probe={report.comparison} role="comparison" listenSeconds={report.listenSeconds} />
+            ) : (
+              <p className="text-[10px] text-muted-foreground/70">
+                No other online, supported device to compare against.
+              </p>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

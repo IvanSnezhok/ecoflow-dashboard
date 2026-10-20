@@ -6,8 +6,11 @@ export type TimeFormat = '12h' | '24h'
 interface SettingsState {
   timezone: string
   timeFormat: TimeFormat
+  /** Collapsible sections the user opened (CollapsibleCard ids) */
+  openSections: string[]
   setTimezone: (timezone: string) => void
   setTimeFormat: (format: TimeFormat) => void
+  toggleSection: (id: string) => void
 }
 
 // Get the browser's default timezone
@@ -41,105 +44,18 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       timezone: getDefaultTimezone(),
       timeFormat: '24h',
+      openSections: [],
       setTimezone: (timezone) => set({ timezone }),
       setTimeFormat: (timeFormat) => set({ timeFormat }),
+      toggleSection: (id) =>
+        set((state) => ({
+          openSections: state.openSections.includes(id)
+            ? state.openSections.filter((open) => open !== id)
+            : [...state.openSections, id],
+        })),
     }),
     {
       name: 'ecoflow-settings',
     }
   )
 )
-
-// Helper function to format date/time according to settings
-export const formatDateTime = (
-  timestamp: string | Date,
-  timezone: string,
-  timeFormat: TimeFormat,
-  options?: {
-    showDate?: boolean
-    showTime?: boolean
-    showSeconds?: boolean
-    shortDate?: boolean
-  }
-): string => {
-  const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
-  const opts = {
-    showDate: true,
-    showTime: true,
-    showSeconds: false,
-    shortDate: false,
-    ...options,
-  }
-
-  const formatOptions: Intl.DateTimeFormatOptions = {
-    timeZone: timezone,
-  }
-
-  if (opts.showDate) {
-    if (opts.shortDate) {
-      formatOptions.month = 'short'
-      formatOptions.day = 'numeric'
-    } else {
-      formatOptions.year = 'numeric'
-      formatOptions.month = '2-digit'
-      formatOptions.day = '2-digit'
-    }
-  }
-
-  if (opts.showTime) {
-    formatOptions.hour = '2-digit'
-    formatOptions.minute = '2-digit'
-    formatOptions.hour12 = timeFormat === '12h'
-    if (opts.showSeconds) {
-      formatOptions.second = '2-digit'
-    }
-  }
-
-  return date.toLocaleString('en-US', formatOptions)
-}
-
-// Helper for chart axis formatting
-export const formatChartTime = (
-  timestamp: string,
-  period: string,
-  timezone: string,
-  timeFormat: TimeFormat
-): string => {
-  const date = new Date(timestamp)
-  const hour12 = timeFormat === '12h'
-
-  switch (period) {
-    case '10m':
-    case '1h':
-    case '24h':
-      return date.toLocaleTimeString('en-US', {
-        timeZone: timezone,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12,
-      })
-    case '7d':
-      return date.toLocaleDateString('en-US', {
-        timeZone: timezone,
-        weekday: 'short',
-        hour: '2-digit',
-        hour12,
-      })
-    case '30d':
-      return date.toLocaleDateString('en-US', {
-        timeZone: timezone,
-        day: 'numeric',
-        month: 'short',
-      })
-    default:
-      // For custom range, auto-detect best format
-      return date.toLocaleString('en-US', {
-        timeZone: timezone,
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12,
-      })
-  }
-}

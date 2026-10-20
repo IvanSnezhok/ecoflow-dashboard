@@ -16,15 +16,38 @@ interface DeviceStore {
   error: string | null
   setDevices: (devices: DeviceWithState[]) => void
   updateDeviceState: (serialNumber: string, state: Partial<DeviceState>) => void
-  updateDeviceStateFromServer: (serialNumber: string, state: Partial<DeviceState>) => void
-  updateDeviceFromServer: (device: DeviceWithState) => void
+  /** Live MQTT fields per device (wsClient), applied in one update */
+  applyLiveUpdates: (updates: Map<string, Partial<DeviceState>>) => void
+  /** A device list poll: metadata and state, in one update */
+  mergeDevicesFromServer: (devices: DeviceWithState[]) => void
   setPendingCommand: (serialNumber: string, field: string, value: unknown) => void
   removePendingCommand: (serialNumber: string, field: string) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
 }
 
-export const useDeviceStore = create<DeviceStore>((set, get) => ({
+/**
+ * Takes the server's values except for a field whose command is still in flight: that
+ * one keeps its optimistic value until the server reports the commanded value.
+ */
+function acceptServerFields(incoming: Partial<DeviceState>, pending: PendingCommand[] | undefined, now: number) {
+  const active = (pending ?? []).filter((cmd) => cmd.expiresAt > now)
+  const accepted: Record<string, unknown> = {}
+  const confirmed = new Set<string>()
+  for (const [key, value] of Object.entries(incoming)) {
+    const cmd = active.find((c) => c.field === key)
+    if (!cmd || cmd.value === value) {
+      accepted[key] = value
+      if (cmd) confirmed.add(key)
+    }
+  }
+  return {
+    accepted: accepted as Partial<DeviceState>,
+    remaining: active.filter((cmd) => !confirmed.has(cmd.field)),
+  }
+}
+
+export const useDeviceStore = create<DeviceStore>((set) => ({
   devices: [],
   pendingCommands: {},
   isLoading: false,
@@ -47,111 +70,48 @@ export const useDeviceStore = create<DeviceStore>((set, get) => ({
       ),
     })),
 
-  // State update from server (respects pending commands)
-  updateDeviceStateFromServer: (serialNumber, newState) => {
-    const { pendingCommands } = get()
-    const devicePending = pendingCommands[serialNumber] || []
-    const now = Date.now()
+  applyLiveUpdates: (updates) =>
+    set((store) => {
+      const now = Date.now()
+      const pendingCommands = { ...store.pendingCommands }
+      let changed = false
+      const devices = store.devices.map((device) => {
+        const update = updates.get(device.serialNumber)
+        if (!update || !device.state) return device
+        const { accepted, remaining } = acceptServerFields(update, pendingCommands[device.serialNumber], now)
+        pendingCommands[device.serialNumber] = remaining
+        const current = device.state as unknown as Record<string, unknown>
+        // A push repeating the values on screen is not worth a re-render
+        if (Object.entries(accepted).every(([key, value]) => current[key] === value)) return device
+        changed = true
+        return { ...device, state: { ...device.state, ...accepted, timestamp: new Date(now).toISOString() } }
+      })
+      return changed ? { devices, pendingCommands } : { pendingCommands }
+    }),
 
-    // Filter out expired pending commands
-    const activePending = devicePending.filter(cmd => cmd.expiresAt > now)
-
-    // Build filtered state that respects pending commands
-    const filteredState: Record<string, unknown> = {}
-    const confirmedFields: string[] = []
-
-    for (const [key, value] of Object.entries(newState)) {
-      const pendingCmd = activePending.find(cmd => cmd.field === key)
-
-      if (pendingCmd) {
-        // Check if server value matches pending value (command confirmed)
-        if (pendingCmd.value === value) {
-          confirmedFields.push(key)
-          filteredState[key] = value
+  mergeDevicesFromServer: (serverDevices) =>
+    set((store) => {
+      const now = Date.now()
+      const pendingCommands = { ...store.pendingCommands }
+      const devices = serverDevices.map((serverDevice) => {
+        const sn = serverDevice.serialNumber
+        const existing = store.devices.find((device) => device.serialNumber === sn)
+        if (!serverDevice.state) {
+          pendingCommands[sn] = []
+          return serverDevice
         }
-        // Otherwise skip this field (keep optimistic value)
-      } else {
-        // No pending command for this field, accept server value
-        filteredState[key] = value
-      }
-    }
-
-    // Update pending commands (remove confirmed ones)
-    const remainingPending = activePending.filter(
-      cmd => !confirmedFields.includes(cmd.field)
-    )
-
-    set((state) => ({
-      devices: state.devices.map((device) =>
-        device.serialNumber === serialNumber
-          ? {
-              ...device,
-              state: device.state
-                ? { ...device.state, ...filteredState } as DeviceState
-                : null,
-            }
-          : device
-      ),
-      pendingCommands: {
-        ...state.pendingCommands,
-        [serialNumber]: remainingPending,
-      },
-    }))
-  },
-
-  // Update device from server (metadata + state respecting pending commands)
-  updateDeviceFromServer: (serverDevice) => {
-    const { pendingCommands } = get()
-    const devicePending = pendingCommands[serverDevice.serialNumber] || []
-    const now = Date.now()
-
-    // Filter out expired pending commands
-    const activePending = devicePending.filter(cmd => cmd.expiresAt > now)
-
-    // Build filtered state that respects pending commands
-    let filteredState: DeviceState | null = null
-    const confirmedFields: string[] = []
-
-    if (serverDevice.state) {
-      const stateObj: Record<string, unknown> = {}
-      for (const [key, value] of Object.entries(serverDevice.state)) {
-        const pendingCmd = activePending.find(cmd => cmd.field === key)
-        if (pendingCmd) {
-          if (pendingCmd.value === value) {
-            confirmedFields.push(key)
-            stateObj[key] = value
-          }
-          // Otherwise skip (keep optimistic value from existing state)
-        } else {
-          stateObj[key] = value
+        const { remaining } = acceptServerFields(serverDevice.state, pendingCommands[sn], now)
+        pendingCommands[sn] = remaining
+        // A field still waiting for its command keeps the optimistic value on screen
+        const state: Record<string, unknown> = { ...serverDevice.state }
+        const shown = existing?.state as unknown as Record<string, unknown> | null | undefined
+        for (const cmd of remaining) {
+          if (shown && cmd.field in shown) state[cmd.field] = shown[cmd.field]
         }
-      }
-      filteredState = stateObj as unknown as DeviceState
-    }
-
-    // Update pending commands (remove confirmed ones)
-    const remainingPending = activePending.filter(
-      cmd => !confirmedFields.includes(cmd.field)
-    )
-
-    set((state) => ({
-      devices: state.devices.map((device) =>
-        device.serialNumber === serverDevice.serialNumber
-          ? {
-              ...serverDevice,
-              // Merge filtered state with existing state to preserve pending fields
-              state: device.state && filteredState
-                ? { ...device.state, ...filteredState }
-                : filteredState,
-            }
-          : device
-      ),
-      pendingCommands: {
-        ...state.pendingCommands,
-        [serverDevice.serialNumber]: remainingPending,
-      },
-    }))
-  },
+        return { ...serverDevice, state: state as unknown as DeviceState }
+      })
+      return { devices, pendingCommands, isLoading: false, error: null }
+    }),
 
   setPendingCommand: (serialNumber, field, value) =>
     set((state) => {

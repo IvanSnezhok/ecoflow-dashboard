@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, FileText, Settings, Battery, Zap, Wifi, WifiOff, Radio, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, FileText, Settings, Battery, Zap, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useDeviceStore } from '@/stores/deviceStore'
 import { useMqtt } from '@/hooks/useMqtt'
 import { usePanelAccess } from '@/hooks/usePanelAccess'
+import { powerStatus, socTextColor } from '@/lib/deviceStatus'
 
 type Access = ReturnType<typeof usePanelAccess>
 
@@ -18,12 +19,20 @@ const navigation: Array<{ name: string; href: string; icon: typeof Zap; show?: (
 
 export function Sidebar({ className }: { className?: string }) {
   const location = useLocation()
-  const { devices, isLoading } = useDeviceStore()
-  const { wsConnected, mqttConnected } = useMqtt()
+  const devices = useDeviceStore((s) => s.devices)
+  const isLoading = useDeviceStore((s) => s.isLoading)
+  const { wsConnected, mqttConnected, lost } = useMqtt()
   const access = usePanelAccess()
 
-  // Calculate online devices count
-  const onlineDevices = devices.filter(d => d.online && d.state)
+  const onlineCount = devices.filter(d => d.online && d.state).length
+  // One line for both links: the panel's socket to its server, the server's to EcoFlow MQTT
+  const live = !wsConnected
+    ? lost
+      ? { label: 'Server connection lost', hint: 'Reconnecting; values may be stale', dot: 'bg-energy-red' }
+      : { label: 'Connecting…', hint: 'Opening the live-update connection', dot: 'bg-muted-foreground animate-pulse' }
+    : !mqttConnected
+      ? { label: 'EcoFlow MQTT reconnecting', hint: 'Values refresh every 10 s meanwhile', dot: 'bg-energy-yellow animate-pulse' }
+      : { label: 'Live updates', hint: 'Connected to the server and EcoFlow MQTT', dot: 'bg-energy-green' }
 
   return (
     <aside className={cn('w-56 shrink-0 border-r bg-card flex-col overflow-y-auto', className)}>
@@ -56,9 +65,9 @@ export function Sidebar({ className }: { className?: string }) {
           <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
             Devices
           </h3>
-          {onlineDevices.length > 0 && (
+          {onlineCount > 0 && (
             <span className="text-[10px] font-mono text-muted-foreground">
-              {onlineDevices.length} online
+              {onlineCount} online
             </span>
           )}
         </div>
@@ -78,7 +87,7 @@ export function Sidebar({ className }: { className?: string }) {
             devices.map((device) => {
               const isActive = location.pathname === `/device/${device.serialNumber}`
               const soc = device.state?.batterySoc || 0
-              const isCharging = device.state ? device.state.batteryWatts > 0 : false
+              const isCharging = device.state ? powerStatus(device.state) === 'charging' : false
 
               return (
                 <Link
@@ -112,11 +121,7 @@ export function Sidebar({ className }: { className?: string }) {
 
                   {/* Battery percentage inline */}
                   {device.state && (
-                    <span className={cn(
-                      'font-mono font-semibold tabular-nums',
-                      soc <= 20 ? 'text-energy-red' :
-                      soc <= 40 ? 'text-energy-yellow' : 'text-energy-green'
-                    )}>
+                    <span className={cn('font-mono font-semibold tabular-nums', socTextColor(soc))}>
                       {soc}%
                     </span>
                   )}
@@ -127,47 +132,10 @@ export function Sidebar({ className }: { className?: string }) {
         </div>
       </div>
 
-      {/* System Status Block - Bottom */}
-      <div className="p-3 border-t bg-muted/30">
-        <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-          System
-        </h3>
-        <div className="space-y-1.5">
-          {/* WebSocket Status */}
-          <div className="flex items-center gap-2 text-xs">
-            {wsConnected ? (
-              <Wifi className="w-3.5 h-3.5 text-energy-green" />
-            ) : (
-              <WifiOff className="w-3.5 h-3.5 text-energy-red" />
-            )}
-            <span className={cn(
-              'font-medium',
-              wsConnected ? 'text-energy-green' : 'text-energy-red'
-            )}>
-              WS
-            </span>
-            <span className="text-muted-foreground">
-              {wsConnected ? 'Connected' : 'Offline'}
-            </span>
-          </div>
-
-          {/* MQTT Status */}
-          <div className="flex items-center gap-2 text-xs">
-            <Radio className={cn(
-              'w-3.5 h-3.5',
-              mqttConnected ? 'text-energy-green' : 'text-energy-yellow animate-pulse'
-            )} />
-            <span className={cn(
-              'font-medium',
-              mqttConnected ? 'text-energy-green' : 'text-energy-yellow'
-            )}>
-              MQTT
-            </span>
-            <span className="text-muted-foreground">
-              {mqttConnected ? 'Live' : 'Connecting...'}
-            </span>
-          </div>
-        </div>
+      {/* Live-update status */}
+      <div className="px-3 py-2.5 border-t bg-muted/30 flex items-center gap-2 text-xs" title={live.hint}>
+        <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', live.dot)} />
+        <span className="text-muted-foreground truncate">{live.label}</span>
       </div>
     </aside>
   )

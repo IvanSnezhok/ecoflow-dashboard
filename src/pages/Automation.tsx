@@ -413,7 +413,7 @@ function LogEntry({ log }: { log: AutomationLog }) {
 }
 
 export default function Automation() {
-  const { devices } = useDeviceStore()
+  const devices = useDeviceStore((s) => s.devices)
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [logs, setLogs] = useState<AutomationLog[]>([])
   const [isLoading, setIsLoading] = useState(true)

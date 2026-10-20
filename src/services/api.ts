@@ -134,17 +134,8 @@ export const api = {
 
   getDevices: () => client.get<DeviceWithState[]>("/devices"),
 
-  getDevice: (serialNumber: string) =>
-    client.get<DeviceWithState>(`/devices/${serialNumber}`),
-
   setAcOutput: (serialNumber: string, enabled: boolean) =>
     client.post(`/devices/${serialNumber}/ac-output`, { enabled }),
-
-  setDcOutput: (serialNumber: string, enabled: boolean) =>
-    client.post(`/devices/${serialNumber}/dc-output`, { enabled }),
-
-  setChargeLimit: (serialNumber: string, maxSoc: number, minSoc: number) =>
-    client.post(`/devices/${serialNumber}/charge-limit`, { maxSoc, minSoc }),
 
   setMaxChargeSoc: (serialNumber: string, maxSoc: number) =>
     client.post(`/devices/${serialNumber}/max-charge-soc`, { maxSoc }),
