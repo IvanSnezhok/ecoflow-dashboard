@@ -231,13 +231,6 @@ export function clearRuleCooldown(ruleId: number): void {
 }
 
 /**
- * Clear all cooldowns
- */
-export function clearAllCooldowns(): void {
-  cooldownTracker.clear()
-}
-
-/**
  * Get cooldown status for a rule
  */
 export function getRuleCooldownStatus(ruleId: number, cooldownSeconds: number): {

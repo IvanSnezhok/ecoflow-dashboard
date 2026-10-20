@@ -1,6 +1,8 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import { Plug, Sun, Zap, ArrowRight, Power, Battery } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { POWER_STATUS, dataSourceChip, powerStatus, remainingTime, socBgColor } from "@/lib/deviceStatus";
 import type { DeviceWithState } from "@/types/device";
 
 interface DeviceCardProps {
@@ -18,22 +20,18 @@ const deviceTypeLabels: Record<string, string> = {
   SMART_PLUG: "Smart Plug",
 };
 
-export function DeviceCard({ device }: DeviceCardProps) {
+export const DeviceCard = memo(function DeviceCard({ device }: DeviceCardProps) {
   const state = device.state;
 
-  const isCharging = state ? state.batteryWatts > 0 : false;
-  const isDischarging = state ? state.batteryWatts < 0 : false;
+  const status = state ? powerStatus(state) : "standby";
+  const isCharging = status === "charging";
+  const isDischarging = status === "discharging";
   const soc = state?.batterySoc || 0;
+  const remaining = state ? remainingTime(state, status) : null;
+  const source = dataSourceChip(device);
 
   const totalInput = (state?.acInputWatts || 0) + (state?.solarInputWatts || 0);
   const acOutput = state?.acOutputWatts || 0;
-
-  // Battery color based on level
-  const getBatteryColor = () => {
-    if (soc <= 20) return 'bg-energy-red';
-    if (soc <= 40) return 'bg-energy-yellow';
-    return 'bg-energy-green';
-  };
 
   return (
     <Link
@@ -77,9 +75,7 @@ export function DeviceCard({ device }: DeviceCardProps) {
               device.online ? "bg-energy-green" : "bg-muted-foreground"
             )} />
             {device.online ? "ON" : "OFF"}
-            {device.online && (device.dataSource === "ble" || device.dataSource === "cloud+ble") && (
-              <span className="text-primary" title="Live data over Bluetooth">· BLE</span>
-            )}
+            {source && <span className="text-primary" title={source.title}>· {source.label}</span>}
           </div>
         </div>
       </div>
@@ -102,7 +98,7 @@ export function DeviceCard({ device }: DeviceCardProps) {
                   <div
                     className={cn(
                       "absolute inset-y-0 left-0 transition-all duration-500",
-                      getBatteryColor(),
+                      socBgColor(soc),
                       isCharging && "animate-pulse"
                     )}
                     style={{ width: `${soc}%` }}
@@ -176,44 +172,36 @@ export function DeviceCard({ device }: DeviceCardProps) {
             </div>
           </div>
 
-          {/* AC Status indicator */}
-          <div className="px-4 pb-4 pt-2 border-t border-border/50">
-            <div className="flex items-center justify-between">
-              {/* AC Status */}
-              <div className={cn(
-                "flex items-center gap-1.5 text-[10px] font-mono",
-                state.acOutputWatts > 0 ? "text-energy-blue" : "text-muted-foreground/50"
-              )}>
-                <span className={cn(
-                  "w-1.5 h-1.5 rounded-sm",
-                  state.acOutputWatts > 0 ? "bg-energy-blue" : "bg-muted-foreground/30"
-                )} />
-                AC OUTPUT
-              </div>
-
-              {/* Details link */}
-              <div className="flex items-center gap-1 text-[10px] text-muted-foreground group-hover:text-primary transition-colors">
-                <span>Details</span>
-                <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-              </div>
-            </div>
+          {/* What the battery is doing, and for how long it can */}
+          <div className="px-4 py-2.5 border-t border-border/50 flex items-center justify-between gap-2 text-[10px] font-mono">
+            <span className={cn("font-semibold uppercase tracking-wider", POWER_STATUS[status].text)}>
+              {POWER_STATUS[status].label}
+              {remaining && <span className="ml-1.5 font-normal normal-case tracking-normal text-muted-foreground">{remaining}</span>}
+            </span>
+            {device.capabilities?.acOutput !== false && !state.acOutEnabled && (
+              <span className="text-muted-foreground" title="The AC sockets are switched off">AC off</span>
+            )}
           </div>
         </>
       ) : (
-        <div className="px-4 py-8 text-center">
-          <Battery className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-          <p className="text-xs text-muted-foreground">
-            {device.quotaError
-              ? "EcoFlow cloud sends no data for this device"
-              : device.profileStatus === "read-only" ? "Read-only profile — telemetry mapping pending" : "No data"}
-          </p>
-          {device.quotaError && (
-            <p className="mt-1 text-[10px] font-mono text-muted-foreground/70 break-words">
-              {device.quotaError} · Details → Data access check
+        <div className="px-4 pb-4 flex items-start gap-2 text-xs text-muted-foreground">
+          <Battery className="w-4 h-4 shrink-0 text-muted-foreground/50" />
+          <div className="min-w-0">
+            <p>
+              {!device.online
+                ? "Offline: the EcoFlow cloud does not see this device"
+                : device.quotaError
+                  ? "EcoFlow cloud sends no data for this device"
+                  : device.profileStatus === "read-only" ? "Read-only profile — telemetry mapping pending" : "No data"}
             </p>
-          )}
+            {device.online && device.quotaError && (
+              <p className="mt-1 text-[10px] font-mono text-muted-foreground/70 break-words">
+                {device.quotaError} · Details → Data access check
+              </p>
+            )}
+          </div>
         </div>
       )}
     </Link>
   );
-}
+});

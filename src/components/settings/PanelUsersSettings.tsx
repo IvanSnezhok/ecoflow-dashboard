@@ -18,7 +18,7 @@ const formatMoment = (iso: string) =>
 const errorText = (err: unknown) => (err instanceof Error ? err.message : 'Request failed')
 
 function useDeviceName() {
-  const { devices } = useDeviceStore()
+  const devices = useDeviceStore((s) => s.devices)
   return (sn: string) => devices.find((device) => device.serialNumber === sn)?.name ?? sn
 }
 
@@ -46,7 +46,7 @@ function RolePicker({ value, onChange }: { value: MemberRole; onChange: (role: M
 
 /** All devices (also ones added later), or a chosen set */
 function DevicePicker({ value, onChange }: { value: string[] | null; onChange: (devices: string[] | null) => void }) {
-  const { devices } = useDeviceStore()
+  const devices = useDeviceStore((s) => s.devices)
   const name = useDeviceName()
   // Devices given earlier that the panel no longer lists stay visible, so they can be taken away
   const serials = [...new Set([...devices.map((device) => device.serialNumber), ...(value ?? [])])]

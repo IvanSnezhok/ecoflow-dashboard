@@ -7,9 +7,11 @@ export default {
   ],
   theme: {
     extend: {
+      // Locally installed fonts first, else the system's; nothing is downloaded (the
+      // server's CSP only allows its own stylesheets)
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'IBM Plex Mono', 'monospace'],
+        mono: ['JetBrains Mono', 'IBM Plex Mono', 'ui-monospace', 'monospace'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -45,13 +47,6 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        chart: {
-          "1": "hsl(var(--chart-1))",
-          "2": "hsl(var(--chart-2))",
-          "3": "hsl(var(--chart-3))",
-          "4": "hsl(var(--chart-4))",
-          "5": "hsl(var(--chart-5))",
-        },
         // Energy System accent colors
         energy: {
           green: "#10B981",
@@ -66,11 +61,15 @@ export default {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
-      backgroundImage: {
-        'grid-pattern': 'linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px)',
+      // Energy flow lines (EnergyFlowDiagram): dashes move toward the arrow
+      keyframes: {
+        'flow-dash': {
+          from: { strokeDashoffset: '24' },
+          to: { strokeDashoffset: '0' },
+        },
       },
-      backgroundSize: {
-        'grid': '24px 24px',
+      animation: {
+        'flow-dash': 'flow-dash 0.8s linear infinite',
       },
     },
   },

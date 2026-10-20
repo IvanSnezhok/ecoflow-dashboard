@@ -3,26 +3,20 @@ import { useDeviceStore } from '@/stores/deviceStore'
 import { Battery } from 'lucide-react'
 
 export function DeviceList() {
-  const { devices, isLoading, error } = useDeviceStore()
+  const devices = useDeviceStore((s) => s.devices)
+  const isLoading = useDeviceStore((s) => s.isLoading)
+  const error = useDeviceStore((s) => s.error)
 
   if (isLoading) {
     return (
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <Battery className="w-4 h-4 text-muted-foreground" />
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Devices
-          </h3>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2].map((i) => (
-            <div key={i} className="rounded-sm border border-l-4 border-l-muted bg-card p-4 animate-pulse">
-              <div className="h-3 bg-muted rounded w-1/2 mb-3"></div>
-              <div className="h-8 bg-muted rounded w-full mb-3"></div>
-              <div className="h-3 bg-muted rounded w-2/3"></div>
-            </div>
-          ))}
-        </div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {[1, 2].map((i) => (
+          <div key={i} className="rounded-sm border border-l-4 border-l-muted bg-card p-4 animate-pulse">
+            <div className="h-3 bg-muted rounded w-1/2 mb-3"></div>
+            <div className="h-8 bg-muted rounded w-full mb-3"></div>
+            <div className="h-3 bg-muted rounded w-2/3"></div>
+          </div>
+        ))}
       </div>
     )
   }
@@ -51,23 +45,10 @@ export function DeviceList() {
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Battery className="w-4 h-4 text-muted-foreground" />
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Devices
-          </h3>
-        </div>
-        <span className="text-[10px] font-mono text-muted-foreground">
-          {devices.length} total
-        </span>
-      </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {devices.map((device) => (
-          <DeviceCard key={device.serialNumber} device={device} />
-        ))}
-      </div>
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {devices.map((device) => (
+        <DeviceCard key={device.serialNumber} device={device} />
+      ))}
     </div>
   )
 }

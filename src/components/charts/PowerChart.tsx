@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo } from 'react'
 import {
   AreaChart,
   Area,
@@ -10,9 +10,8 @@ import {
   Legend,
 } from 'recharts'
 import type { HistoryDataPoint, ChartPeriod, DateRange } from '@/types/device'
-import { chartColors, formatTimestamp } from './chartConfig'
+import { chartColors, cursorProps, gridProps, axisProps, xAxisProps, legendProps, useTimeTickFormatter, useTooltipTime } from './chartConfig'
 import { formatWatts, type PowerKey } from './chartStats'
-import { useSettingsStore } from '@/stores/settingsStore'
 
 /**
  * `input`  – what charges the station (grid, solar).
@@ -38,12 +37,12 @@ interface SeriesConfig {
 
 const SERIES: Record<PowerChartMode, SeriesConfig[]> = {
   input: [
-    { key: 'acInputWatts', label: 'Grid (AC in)', color: chartColors.acInput.stroke },
-    { key: 'solarInputWatts', label: 'Solar', color: chartColors.solarInput.stroke },
+    { key: 'acInputWatts', label: 'Grid (AC in)', color: chartColors.acInput },
+    { key: 'solarInputWatts', label: 'Solar', color: chartColors.solarInput },
   ],
   output: [
-    { key: 'acOutputWatts', label: 'AC out', color: chartColors.acOutput.stroke },
-    { key: 'dcOutputWatts', label: 'DC / USB out', color: chartColors.dcOutput.stroke },
+    { key: 'acOutputWatts', label: 'AC out', color: chartColors.acOutput },
+    { key: 'dcOutputWatts', label: 'DC / USB out', color: chartColors.dcOutput },
   ],
 }
 
@@ -64,7 +63,7 @@ function CustomTooltip({ active, payload, label, mode }: {
   label?: string
   mode: PowerChartMode
 }) {
-  const { timezone, timeFormat } = useSettingsStore()
+  const time = useTooltipTime(label)
 
   if (!active || !payload || !payload.length || !label) return null
   const values = payload.filter((entry) => entry.value !== null && entry.value !== undefined)
@@ -75,16 +74,7 @@ function CustomTooltip({ active, payload, label, mode }: {
 
   return (
     <div className="bg-card border border-border rounded-sm shadow-lg p-2 min-w-[160px]">
-      <p className="text-[10px] text-muted-foreground font-mono mb-1.5 pb-1.5 border-b border-border">
-        {new Date(label).toLocaleString('en-US', {
-          timeZone: timezone,
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: timeFormat === '12h',
-        })}
-      </p>
+      <p className="text-[10px] text-muted-foreground font-mono mb-1.5 pb-1.5 border-b border-border">{time}</p>
       <div className="space-y-1">
         {values.map((entry) => (
           <div key={entry.dataKey} className="flex items-center justify-between gap-3">
@@ -111,21 +101,7 @@ export const PowerChart = memo(function PowerChart({
   height = 200,
   customRange,
 }: PowerChartProps) {
-  // Subscribe to settings store to re-render when timezone changes
-  const { timezone, timeFormat } = useSettingsStore()
-
-  const customRangeDurationHours = useMemo(() => {
-    if (period !== 'custom' || !customRange) return undefined
-    const from = new Date(customRange.from).getTime()
-    const to = new Date(customRange.to).getTime()
-    return (to - from) / (1000 * 60 * 60)
-  }, [period, customRange])
-
-  const tickFormatter = useMemo(() => {
-    return (value: string) => formatTimestamp(value, period, customRangeDurationHours)
-    // timezone/timeFormat are read inside formatTimestamp; listed to refresh ticks
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, customRangeDurationHours, timezone, timeFormat])
+  const tickFormatter = useTimeTickFormatter(period, customRange)
 
   const series = SERIES[mode]
 
@@ -141,41 +117,21 @@ export const PowerChart = memo(function PowerChart({
           ))}
         </defs>
 
-        <CartesianGrid strokeDasharray="2 4" stroke={chartColors.grid} vertical={false} strokeOpacity={0.7} />
-
-        <XAxis
-          dataKey="timestamp"
-          tickFormatter={tickFormatter}
-          stroke={chartColors.text}
-          fontSize={10}
-          fontFamily="JetBrains Mono, monospace"
-          tickLine={false}
-          axisLine={{ stroke: chartColors.grid, strokeWidth: 1 }}
-          dy={5}
-          interval="preserveStartEnd"
-          minTickGap={40}
-        />
+        <CartesianGrid {...gridProps} />
+        <XAxis {...xAxisProps} tickFormatter={tickFormatter} />
         <YAxis
+          {...axisProps}
           tickFormatter={(value: number) => formatWatts(value)}
-          stroke={chartColors.text}
-          fontSize={10}
-          fontFamily="JetBrains Mono, monospace"
-          tickLine={false}
           axisLine={false}
           width={44}
           allowDecimals={false}
         />
 
-        <Tooltip
-          content={<CustomTooltip mode={mode} />}
-          cursor={{ stroke: chartColors.text, strokeWidth: 1, strokeDasharray: '4 4' }}
-        />
+        <Tooltip content={<CustomTooltip mode={mode} />} cursor={cursorProps} />
 
         <Legend
-          wrapperStyle={{ fontSize: '10px', fontFamily: 'JetBrains Mono, monospace' }}
+          {...legendProps}
           formatter={(value: string) => series.find((s) => s.key === value)?.label ?? value}
-          iconType="square"
-          iconSize={8}
         />
 
         {series.map((s) => (

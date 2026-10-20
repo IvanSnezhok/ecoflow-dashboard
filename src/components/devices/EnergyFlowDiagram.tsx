@@ -1,86 +1,49 @@
 import { cn } from '@/lib/utils'
 import { Sun, Plug, Home, Battery, Zap } from 'lucide-react'
+import { POWER_STATUS, socTextColor, type PowerStatus } from '@/lib/deviceStatus'
 
 interface EnergyFlowDiagramProps {
   solarInput: number
   acInput: number
   acOutput: number
   batterySoc: number
-  isCharging: boolean
-  isDischarging: boolean
-  /** AC input feeds the AC output directly while the battery rests */
-  isBypass?: boolean
+  status: PowerStatus
+  /** e.g. "1h 20m to full" */
+  remaining?: string | null
 }
 
-function FlowLine({
-  active,
-  color,
-  className,
-}: {
-  active: boolean
-  color: string
-  className?: string
-}) {
-  // Convert bg color to stroke color for SVG
-  const strokeColor = color.replace('bg-', 'stroke-')
+// Literal class names, so Tailwind generates them
+const FLOW_TONES = {
+  yellow: { line: 'stroke-energy-yellow', arrow: 'border-l-energy-yellow' },
+  purple: { line: 'stroke-energy-purple', arrow: 'border-l-energy-purple' },
+  blue: { line: 'stroke-energy-blue', arrow: 'border-l-energy-blue' },
+}
 
+/** A dashed line with an arrowhead; the dashes move while power flows */
+function Flow({ active, tone }: { active: boolean; tone: keyof typeof FLOW_TONES }) {
   return (
-    <div className={cn('relative flex-1 h-3 min-w-[12px] sm:min-w-[40px]', className)}>
-      <svg className="w-full h-full" preserveAspectRatio="none">
-        {/* Base dashed line */}
-        <line
-          x1="0"
-          y1="50%"
-          x2="100%"
-          y2="50%"
-          className={cn(
-            'transition-all duration-300',
-            active ? strokeColor : 'stroke-border'
-          )}
-          strokeWidth="2"
-          strokeDasharray="8 4"
-          strokeLinecap="round"
-        />
-        {/* Animated flow overlay when active */}
-        {active && (
+    <>
+      <div className="relative flex-1 h-3 min-w-[12px] sm:min-w-[40px]">
+        <svg className="w-full h-full" preserveAspectRatio="none">
           <line
             x1="0"
             y1="50%"
             x2="100%"
             y2="50%"
-            className={cn(strokeColor, 'animate-flow-dash')}
+            className={cn('transition-colors duration-300', active ? cn(FLOW_TONES[tone].line, 'animate-flow-dash') : 'stroke-border')}
             strokeWidth="2"
             strokeDasharray="8 4"
             strokeLinecap="round"
-            style={{ opacity: 0.6 }}
           />
+        </svg>
+      </div>
+      <div
+        className={cn(
+          'w-0 h-0 border-y-[5px] border-y-transparent border-l-[8px] transition-colors flex-shrink-0',
+          active ? FLOW_TONES[tone].arrow : 'border-l-border'
         )}
-      </svg>
-    </div>
-  )
-}
-
-function FlowArrow({
-  active,
-  color,
-  direction = 'right',
-}: {
-  active: boolean
-  color: string
-  direction?: 'right' | 'left'
-}) {
-  const borderClass = direction === 'right'
-    ? color.replace('bg-', 'border-l-')
-    : color.replace('bg-', 'border-r-')
-
-  return (
-    <div
-      className={cn(
-        'w-0 h-0 border-y-[5px] border-y-transparent transition-colors flex-shrink-0',
-        direction === 'right' ? 'border-l-[8px]' : 'border-r-[8px]',
-        active ? borderClass : direction === 'right' ? 'border-l-border' : 'border-r-border'
-      )}
-    />
+      />
+    </>
   )
 }
 
@@ -128,12 +91,13 @@ export function EnergyFlowDiagram({
   acInput,
   acOutput,
   batterySoc,
-  isCharging,
-  isDischarging,
-  isBypass = false,
+  status,
+  remaining,
 }: EnergyFlowDiagramProps) {
   const totalInput = solarInput + acInput
   const netPower = totalInput - acOutput
+  const isCharging = status === 'charging'
+  const isDischarging = status === 'discharging'
 
   return (
     <div className="p-3 sm:p-4 rounded-sm border bg-card overflow-hidden">
@@ -143,18 +107,15 @@ export function EnergyFlowDiagram({
           <Zap className="w-3.5 h-3.5" />
           Energy Flow
         </h4>
-        <span
-          className={cn(
-            'text-[10px] font-mono px-2 py-0.5 rounded-sm',
-            isBypass ? 'bg-energy-purple/10 text-energy-purple' :
-            isCharging ? 'bg-energy-green/10 text-energy-green' :
-            isDischarging ? 'bg-energy-blue/10 text-energy-blue' :
-            'bg-muted text-muted-foreground'
-          )}
-          title={isBypass ? 'AC input powers the AC output directly; the battery is resting' : undefined}
-        >
-          {isBypass ? 'BYPASS' : isCharging ? 'CHARGING' : isDischarging ? 'DISCHARGING' : 'STANDBY'}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {remaining && <span className="text-[10px] font-mono text-muted-foreground truncate">{remaining}</span>}
+          <span
+            className={cn('text-[10px] font-mono uppercase px-2 py-0.5 rounded-sm shrink-0', POWER_STATUS[status].badge)}
+            title={status === 'bypass' ? 'AC input powers the AC output directly; the battery is resting' : undefined}
+          >
+            {POWER_STATUS[status].label}
+          </span>
+        </div>
       </div>
 
       {/* Flow Diagram - Horizontal Layout */}
@@ -185,13 +146,11 @@ export function EnergyFlowDiagram({
         <div className="flex flex-col gap-4 flex-1 min-w-0">
           {/* Solar line */}
           <div className="flex items-center h-[70px]">
-            <FlowLine active={solarInput > 0} color="bg-energy-yellow" />
-            <FlowArrow active={solarInput > 0} color="bg-energy-yellow" />
+            <Flow active={solarInput > 0} tone="yellow" />
           </div>
           {/* AC Input line */}
           <div className="flex items-center h-[70px]">
-            <FlowLine active={acInput > 0} color="bg-energy-purple" />
-            <FlowArrow active={acInput > 0} color="bg-energy-purple" />
+            <Flow active={acInput > 0} tone="purple" />
           </div>
         </div>
 
@@ -229,12 +188,7 @@ export function EnergyFlowDiagram({
             </div>
             {/* SOC display */}
             <div className="text-center mt-2">
-              <span className={cn(
-                'text-2xl sm:text-3xl font-mono font-bold tabular-nums',
-                batterySoc <= 20 ? 'text-energy-red' :
-                batterySoc <= 40 ? 'text-energy-yellow' :
-                'text-energy-green'
-              )}>
+              <span className={cn('text-2xl sm:text-3xl font-mono font-bold tabular-nums', socTextColor(batterySoc))}>
                 {batterySoc}%
               </span>
             </div>
@@ -255,8 +209,7 @@ export function EnergyFlowDiagram({
 
         {/* Output Line from Battery */}
         <div className="flex items-center flex-1 min-w-0">
-          <FlowLine active={acOutput > 0} color="bg-energy-blue" />
-          <FlowArrow active={acOutput > 0} color="bg-energy-blue" />
+          <Flow active={acOutput > 0} tone="blue" />
         </div>
 
         {/* Output Node */}
@@ -269,22 +222,6 @@ export function EnergyFlowDiagram({
           colorClass="bg-energy-blue/20 text-energy-blue"
         />
       </div>
-
-      {/* CSS for animated dashed flow */}
-      <style>{`
-        @keyframes flow-dash {
-          0% { stroke-dashoffset: 24; }
-          100% { stroke-dashoffset: 0; }
-        }
-        .animate-flow-dash {
-          animation: flow-dash 0.8s linear infinite;
-        }
-        .stroke-energy-yellow { stroke: #F59E0B; }
-        .stroke-energy-purple { stroke: #A855F7; }
-        .stroke-energy-blue { stroke: #3B82F6; }
-        .stroke-energy-green { stroke: #10B981; }
-        .stroke-border { stroke: #E2E8F0; }
-      `}</style>
     </div>
   )
 }

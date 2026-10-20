@@ -6,15 +6,16 @@ import {
   Power,
   BarChart3,
   ExternalLink,
-  Clock,
-  Settings,
   AlertTriangle,
+  Cpu,
+  Stethoscope,
 } from "lucide-react";
 import { useDeviceStore } from "@/stores/deviceStore";
 import { EnergyFlowDiagram } from "@/components/devices/EnergyFlowDiagram";
 import { BatteryPack, packCapacityWh } from "@/components/devices/BatteryPack";
 import { TechnicalToggle } from "@/components/ui/TechnicalToggle";
 import { TechnicalSlider } from "@/components/ui/TechnicalSlider";
+import { CollapsibleCard } from "@/components/ui/CollapsibleCard";
 import {
   BatteryChartPanel,
   PowerChartPanel,
@@ -24,33 +25,25 @@ import {
 } from "@/components/charts";
 import { api } from "@/services/api";
 import { cn } from "@/lib/utils";
+import { dataSourceChip, powerStatus, remainingTime } from "@/lib/deviceStatus";
 import { DeviceIssues } from "@/components/devices/DeviceIssues";
 import { DeviceInfoCard } from "@/components/devices/DeviceInfoCard";
 import { DataAccessCheck } from "@/components/devices/DataAccessCheck";
 import { collectDeviceIssues } from "@/utils/errorCodes";
-import type { ChartPeriod } from "@/types/device";
+import type { ChartPeriod, DeviceState } from "@/types/device";
 import { usePanelAccess } from "@/hooks/usePanelAccess";
 
-function ViewOnly() {
-  return (
-    <span className="ml-auto text-[10px] font-mono uppercase tracking-wider text-muted-foreground">View only</span>
-  );
-}
+type CommandField = "acOutEnabled" | "maxChgSoc" | "minDsgSoc" | "acChargingPower";
 
 export default function DeviceDetail() {
   const { serialNumber } = useParams<{ serialNumber: string }>();
-  const { devices, updateDeviceState, setPendingCommand, removePendingCommand } = useDeviceStore();
-  const [isTogglingAc, setIsTogglingAc] = useState(false);
+  // Only this device: updates of other devices do not re-render the page
+  const device = useDeviceStore((s) => s.devices.find((d) => d.serialNumber === serialNumber));
+  const [busy, setBusy] = useState<Partial<Record<CommandField, boolean>>>({});
   const [chartPeriod, setChartPeriod] = useState<ChartPeriod>("24h");
   // A viewer sees the controls but cannot use them (the server refuses the commands too)
   const { canControl } = usePanelAccess();
 
-  // Charge settings states
-  const [isSettingMaxSoc, setIsSettingMaxSoc] = useState(false);
-  const [isSettingMinSoc, setIsSettingMinSoc] = useState(false);
-  const [isSettingChargePower, setIsSettingChargePower] = useState(false);
-
-  const device = devices.find((d) => d.serialNumber === serialNumber);
   const {
     data: chartData,
     isLoading: isChartLoading,
@@ -59,101 +52,33 @@ export default function DeviceDetail() {
     refetch: refetchChart,
   } = useChartData(serialNumber || "", chartPeriod);
 
-  const handleToggleAc = async () => {
-    if (!device?.state || isTogglingAc) return;
+  /**
+   * Shows the new value at once and holds it against older server values until the
+   * device confirms it; on failure the previous value comes back.
+   */
+  const runCommand = async <F extends CommandField>(
+    field: F,
+    value: DeviceState[F],
+    send: (sn: string) => Promise<unknown>,
+    what: string,
+  ) => {
+    if (!device?.state || busy[field]) return;
+    const sn = device.serialNumber;
+    const previous = device.state[field];
+    const { setPendingCommand, updateDeviceState, removePendingCommand } = useDeviceStore.getState();
 
-    setIsTogglingAc(true);
-    const newState = !device.state.acOutEnabled;
-
-    // Set pending command before optimistic update
-    setPendingCommand(device.serialNumber, 'acOutEnabled', newState);
-    updateDeviceState(device.serialNumber, { acOutEnabled: newState });
-
+    setBusy((b) => ({ ...b, [field]: true }));
+    setPendingCommand(sn, field, value);
+    updateDeviceState(sn, { [field]: value });
     try {
-      await api.setAcOutput(device.serialNumber, newState);
+      await send(sn);
     } catch (error) {
-      console.error("Failed to toggle AC output:", error);
-      // Remove pending on error and revert
-      removePendingCommand(device.serialNumber, 'acOutEnabled');
-      updateDeviceState(device.serialNumber, { acOutEnabled: !newState });
-      alert(
-        "Failed to toggle AC output: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
+      console.error(`Failed to set ${what}:`, error);
+      removePendingCommand(sn, field);
+      updateDeviceState(sn, { [field]: previous });
+      alert(`Failed to set ${what}: ` + (error instanceof Error ? error.message : "Unknown error"));
     } finally {
-      setIsTogglingAc(false);
-    }
-  };
-
-  const handleSetMaxSoc = async (value: number) => {
-    if (!device?.state || isSettingMaxSoc) return;
-
-    setIsSettingMaxSoc(true);
-
-    // Set pending command before optimistic update
-    setPendingCommand(device.serialNumber, 'maxChgSoc', value);
-    updateDeviceState(device.serialNumber, { maxChgSoc: value });
-
-    try {
-      await api.setMaxChargeSoc(device.serialNumber, value);
-    } catch (error) {
-      console.error("Failed to set max charge SOC:", error);
-      // Remove pending on error
-      removePendingCommand(device.serialNumber, 'maxChgSoc');
-      alert(
-        "Failed to set max charge SOC: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
-    } finally {
-      setIsSettingMaxSoc(false);
-    }
-  };
-
-  const handleSetMinSoc = async (value: number) => {
-    if (!device?.state || isSettingMinSoc) return;
-
-    setIsSettingMinSoc(true);
-
-    // Set pending command before optimistic update
-    setPendingCommand(device.serialNumber, 'minDsgSoc', value);
-    updateDeviceState(device.serialNumber, { minDsgSoc: value });
-
-    try {
-      await api.setMinDischargeSoc(device.serialNumber, value);
-    } catch (error) {
-      console.error("Failed to set min discharge SOC:", error);
-      // Remove pending on error
-      removePendingCommand(device.serialNumber, 'minDsgSoc');
-      alert(
-        "Failed to set min discharge SOC: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
-    } finally {
-      setIsSettingMinSoc(false);
-    }
-  };
-
-  const handleSetChargePower = async (value: number) => {
-    if (!device?.state || isSettingChargePower) return;
-
-    setIsSettingChargePower(true);
-
-    // Set pending command before optimistic update
-    setPendingCommand(device.serialNumber, 'acChargingPower', value);
-    updateDeviceState(device.serialNumber, { acChargingPower: value });
-
-    try {
-      await api.setChargingPower(device.serialNumber, value);
-    } catch (error) {
-      console.error("Failed to set charging power:", error);
-      // Remove pending on error
-      removePendingCommand(device.serialNumber, 'acChargingPower');
-      alert(
-        "Failed to set charging power: " +
-          (error instanceof Error ? error.message : "Unknown error"),
-      );
-    } finally {
-      setIsSettingChargePower(false);
+      setBusy((b) => ({ ...b, [field]: false }));
     }
   };
 
@@ -183,22 +108,22 @@ export default function DeviceDetail() {
   }
 
   const state = device.state;
-  // AC input feeds the AC output while the battery rests; a few watts either way are
-  // conversion losses in the station's in/out sums, not charging
-  const isBypass = !!state && state.acInputWatts > 0 && state.acOutputWatts > 0 && Math.abs(state.batteryWatts) <= 30;
-  const isCharging = state && !isBypass ? state.batteryWatts > 0 : false;
-  const isDischarging = state && !isBypass ? state.batteryWatts < 0 : false;
+  const status = state ? powerStatus(state) : "standby";
+  const source = dataSourceChip(device);
+  const offline = !device.online;
   // A read-only device (e.g. a DELTA Max read from MQTT) shows only the settings it
   // reports, not a slider's default value
+  const showAcToggle = device.capabilities?.acOutput !== false;
   const showChargePower = state?.acChargingPower !== undefined || device.capabilities?.chargingPower !== undefined || !device.capabilities;
   const showChargeLimits = state?.maxChgSoc !== undefined || device.capabilities?.chargeLimits !== false;
 
   return (
     <div className="space-y-6">
-      {/* Header - Minimalist */}
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Link
           to="/"
+          aria-label="Back to Dashboard"
           className="inline-flex items-center justify-center w-8 h-8 rounded-sm border bg-card hover:bg-muted transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -216,33 +141,17 @@ export default function DeviceDetail() {
             )}>
               {device.online ? "ONLINE" : "OFFLINE"}
             </span>
-            {/* Shown when the data arrives over Bluetooth, e.g. while Wi-Fi is down */}
-            {device.online && (device.dataSource === "ble" || device.dataSource === "cloud+ble") && (
-              <span
-                className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase bg-primary/10 text-primary"
-                title={device.cloudOnline ? "Live data over Bluetooth; cloud connected too" : "Cloud unreachable; live data over Bluetooth"}
-              >
-                {device.cloudOnline ? "BLE" : "BLE ONLY"}
-              </span>
-            )}
-            {/* The cloud refuses this device's REST quota (e.g. a shared device): read from its
-                MQTT push, or in full through the EcoFlow app channel */}
-            {device.online && (device.dataSource === "mqtt" || device.dataSource === "app") && (
-              <span
-                className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase bg-primary/10 text-primary"
-                title={device.dataSource === "app"
-                  ? "EcoFlow refuses this device's REST quota; live data through the EcoFlow app channel (Settings)"
-                  : "EcoFlow refuses this device's REST quota; live data from its MQTT push"}
-              >
-                {device.dataSource === "app" ? "APP" : "MQTT"}
+            {/* Data that does not come from the cloud REST quota: Bluetooth, MQTT push, app channel */}
+            {source && (
+              <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono uppercase bg-primary/10 text-primary" title={source.title}>
+                {source.label}
               </span>
             )}
           </div>
-          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider truncate">
             {device.deviceType} • {device.serialNumber}
           </p>
         </div>
-        {/* Last sync time */}
         {state && (
           <div className="text-right hidden sm:block">
             <span className="text-[10px] text-muted-foreground">Last sync</span>
@@ -275,7 +184,7 @@ export default function DeviceDetail() {
           ]}
         />
       )}
-      {!device.online && device.lastKnownErrors && (
+      {offline && device.lastKnownErrors && (
         <DeviceIssues
           title="Last known issues"
           subtitle={`recorded ${new Date(parseServerTimestamp(device.lastKnownErrors.timestamp)).toLocaleString()}`}
@@ -283,25 +192,22 @@ export default function DeviceDetail() {
         />
       )}
 
-      {/* Energy Flow Diagram - Full Width */}
       {state && (
         <EnergyFlowDiagram
           solarInput={state.solarInputWatts}
           acInput={state.acInputWatts}
           acOutput={state.acOutputWatts}
           batterySoc={state.batterySoc}
-          isCharging={isCharging}
-          isDischarging={isDischarging}
-          isBypass={isBypass}
+          status={status}
+          remaining={remainingTime(state, status)}
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Battery Pack - spans 1 column */}
+      <div className="grid gap-4 lg:grid-cols-2">
         {state && (
           <BatteryPack
             mainSoc={state.batterySoc}
-            mainIsCharging={isCharging}
+            mainIsCharging={status === "charging"}
             mainTemp={state.temperature}
             mainErrCode={state.errorCodes?.bmsMasterErrCode}
             extraBattery1={state.extraBattery1}
@@ -311,137 +217,86 @@ export default function DeviceDetail() {
           />
         )}
 
-        {/* Controls - AC Output Only */}
+        {/* AC output and charge settings */}
         <div className="rounded-sm border bg-card overflow-hidden">
           <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
             <Power className="w-4 h-4 text-primary" />
             <span className="text-xs font-semibold uppercase tracking-wider">Controls</span>
-            {!canControl && <ViewOnly />}
-          </div>
-          <div className="p-4 space-y-4">
-            {state ? (
-              <>
-                {/* AC Output Toggle */}
-                {device.capabilities?.acOutput !== false && <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm font-medium">AC Output</span>
-                    <p className="text-[10px] text-muted-foreground">
-                      {isTogglingAc ? "Switching..." : state.acOutEnabled ? "Enabled" : "Disabled"}
-                    </p>
-                  </div>
-                  <TechnicalToggle
-                    checked={state.acOutEnabled}
-                    onChange={handleToggleAc}
-                    disabled={!canControl || !device.online || isTogglingAc}
-                    size="md"
-                  />
-                </div>}
-
-                {/* Status Info */}
-                <div className="pt-3 border-t border-border/50">
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">Status</span>
-                      <p className={cn(
-                        "font-mono font-semibold",
-                        isBypass ? "text-energy-purple" :
-                        isCharging ? "text-energy-green" :
-                        isDischarging ? "text-energy-blue" :
-                        "text-muted-foreground"
-                      )}>
-                        {isBypass ? "BYPASS" : isCharging ? "CHARGING" : isDischarging ? "DISCHARGING" : "IDLE"}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Temp</span>
-                      <p className="font-mono font-semibold">{state.temperature}°C</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Time remaining */}
-                {(isCharging && state.chgRemainTime && state.chgRemainTime > 0) && (
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {state.chgRemainTime >= 60
-                      ? `${Math.floor(state.chgRemainTime / 60)}h ${state.chgRemainTime % 60}m to full`
-                      : `${state.chgRemainTime}m to full`}
-                  </div>
-                )}
-                {(isDischarging && state.dsgRemainTime && state.dsgRemainTime > 0) && (
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {state.dsgRemainTime >= 60
-                      ? `${Math.floor(state.dsgRemainTime / 60)}h ${state.dsgRemainTime % 60}m remaining`
-                      : `${state.dsgRemainTime}m remaining`}
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="text-center text-muted-foreground py-4 text-xs">
-                No data
-              </p>
+            {!canControl && (
+              <span className="ml-auto text-[10px] font-mono uppercase tracking-wider text-muted-foreground">View only</span>
             )}
           </div>
-        </div>
-
-        {/* Charge Settings - third column */}
-        <div className="rounded-sm border bg-card overflow-hidden">
-          <div className="px-4 py-3 border-b bg-muted/30 flex items-center gap-2">
-            <Settings className="w-4 h-4 text-primary" />
-            <span className="text-xs font-semibold uppercase tracking-wider">Charge Settings</span>
-            {!canControl && <ViewOnly />}
-          </div>
-          <div className="p-4">
-            {state && (showChargePower || showChargeLimits) ? (
-              <div className="space-y-4">
-                {showChargePower && <div>
-                  <TechnicalSlider
-                    label="AC Charging Power"
-                    value={state.acChargingPower ?? 1800}
-                    min={200}
-                    max={2900}
-                    step={100}
-                    unit="W"
-                    onChange={handleSetChargePower}
-                    disabled={!canControl || !device.online || (device.capabilities !== undefined && device.capabilities.chargingPower === undefined) || !!state.fastChargingEnabled || isSettingChargePower}
-                    accentColor="purple"
-                  />
-                  {state.fastChargingEnabled && (
-                    <p className="text-[10px] text-energy-yellow mt-2">
-                      Fast charging enabled
-                    </p>
-                  )}
-                </div>}
-                {showChargeLimits && <>
-                <TechnicalSlider
-                  label="Max Charge Level"
-                  value={state.maxChgSoc ?? 100}
-                  min={50}
-                  max={100}
-                  step={1}
-                  unit="%"
-                  onChange={handleSetMaxSoc}
-                  disabled={!canControl || !device.online || device.capabilities?.chargeLimits === false || isSettingMaxSoc}
-                  accentColor="green"
-                />
-                <TechnicalSlider
-                  label="Min Discharge Level"
-                  value={state.minDsgSoc ?? 0}
-                  min={0}
-                  max={30}
-                  step={1}
-                  unit="%"
-                  onChange={handleSetMinSoc}
-                  disabled={!canControl || !device.online || device.capabilities?.chargeLimits === false || isSettingMinSoc}
-                  accentColor="blue"
-                />
-                </>}
-              </div>
+          <div className="p-4 space-y-4">
+            {!state ? (
+              <p className="text-center text-muted-foreground py-4 text-xs">No data</p>
+            ) : !showAcToggle && !showChargePower && !showChargeLimits ? (
+              <p className="text-center text-muted-foreground py-4 text-xs">Not reported by this device</p>
             ) : (
-              <p className="text-center text-muted-foreground py-4 text-xs">
-                {state ? "Not reported by this device" : "No data"}
-              </p>
+              <>
+                {showAcToggle && (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-medium">AC Output</span>
+                      <p className="text-[10px] text-muted-foreground">
+                        {busy.acOutEnabled ? "Switching..." : state.acOutEnabled ? "Enabled" : "Disabled"}
+                      </p>
+                    </div>
+                    <TechnicalToggle
+                      checked={state.acOutEnabled}
+                      onChange={() => runCommand("acOutEnabled", !state.acOutEnabled, (sn) => api.setAcOutput(sn, !state.acOutEnabled), "AC output")}
+                      disabled={!canControl || offline || !!busy.acOutEnabled}
+                      size="md"
+                    />
+                  </div>
+                )}
+                {showAcToggle && (showChargePower || showChargeLimits) && <div className="border-t border-border/50" />}
+                {showChargePower && (
+                  <div>
+                    <TechnicalSlider
+                      label="AC Charging Power"
+                      value={state.acChargingPower ?? 1800}
+                      min={200}
+                      max={2900}
+                      step={100}
+                      unit="W"
+                      onChange={(watts) => runCommand("acChargingPower", watts, (sn) => api.setChargingPower(sn, watts), "charging power")}
+                      disabled={!canControl || offline || (device.capabilities !== undefined && device.capabilities.chargingPower === undefined) || !!state.fastChargingEnabled || !!busy.acChargingPower}
+                      accentColor="purple"
+                    />
+                    {state.fastChargingEnabled && (
+                      <p className="text-[10px] text-energy-yellow mt-2">
+                        Fast charging enabled
+                      </p>
+                    )}
+                  </div>
+                )}
+                {showChargeLimits && (
+                  <>
+                    <TechnicalSlider
+                      label="Max Charge Level"
+                      value={state.maxChgSoc ?? 100}
+                      min={50}
+                      max={100}
+                      step={1}
+                      unit="%"
+                      onChange={(soc) => runCommand("maxChgSoc", soc, (sn) => api.setMaxChargeSoc(sn, soc), "max charge level")}
+                      disabled={!canControl || offline || device.capabilities?.chargeLimits === false || !!busy.maxChgSoc}
+                      accentColor="green"
+                    />
+                    <TechnicalSlider
+                      label="Min Discharge Level"
+                      value={state.minDsgSoc ?? 0}
+                      min={0}
+                      max={30}
+                      step={1}
+                      unit="%"
+                      onChange={(soc) => runCommand("minDsgSoc", soc, (sn) => api.setMinDischargeSoc(sn, soc), "min discharge level")}
+                      disabled={!canControl || offline || device.capabilities?.chargeLimits === false || !!busy.minDsgSoc}
+                      accentColor="blue"
+                    />
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -511,11 +366,28 @@ export default function DeviceDetail() {
         </div>
       </div>
 
-      {/* Serial numbers, firmware and Wi-Fi details */}
-      <DeviceInfoCard serialNumber={device.serialNumber} online={device.online} />
+      {/* Technical details, closed until asked for */}
+      <CollapsibleCard
+        id="device-info"
+        icon={<Cpu className="w-4 h-4 text-primary" />}
+        title="Device info"
+        hint="Wi-Fi, connection uptime, Bluetooth, firmware"
+      >
+        <DeviceInfoCard serialNumber={device.serialNumber} online={device.online} />
+      </CollapsibleCard>
 
       {/* Which EcoFlow channels serve this device's data, e.g. for a shared device */}
-      {canControl && <DataAccessCheck key={device.serialNumber} serialNumber={device.serialNumber} />}
+      {canControl && (
+        <CollapsibleCard
+          id="data-access"
+          icon={<Stethoscope className="w-4 h-4 text-primary" />}
+          title="Data access check"
+          hint="Which EcoFlow channels serve this device"
+          keepMounted
+        >
+          <DataAccessCheck key={device.serialNumber} serialNumber={device.serialNumber} />
+        </CollapsibleCard>
+      )}
     </div>
   );
 }
