@@ -2,11 +2,12 @@
 // sessions in SQLite behind an httpOnly cookie. Every /api route except /api/auth and
 // /api/health, and the /ws socket, need a session.
 //
-// Until the account exists the panel is open to whoever reaches it first, so the setup
-// asks for proof of owning the server: the one-time setup code from the server log
-// (also in server/data/auth-setup-code.txt) or the EcoFlow Open API secret key from
-// .env. Lost the authenticator? Delete server/data/auth.json and restart: a new setup
-// code appears and every session ends.
+// The first start creates the initial account (panelAuthSeed.ts). Signed in with it, the
+// owner must choose a username and password and add an authenticator before anything
+// else works (mustChange). Lost the authenticator? Delete server/data/auth.json and
+// restart: every session ends, and since the initial account is used once, the setup
+// then asks for proof of owning the server: the one-time setup code from the server log
+// (also in server/data/auth-setup-code.txt) or the EcoFlow Open API secret key from .env.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -19,19 +20,22 @@ import { config } from "../config/env.js";
 import { parseCookies } from "../lib/cookies.js";
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from "../lib/password.js";
 import { generateTotpSecret, otpauthUri, verifyTotp } from "../lib/totp.js";
+import { INITIAL_ACCOUNT } from "./panelAuthSeed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "../../data");
 const ACCOUNT_FILE = path.join(DATA_DIR, "auth.json");
 const SETUP_CODE_FILE = path.join(DATA_DIR, "auth-setup-code.txt");
+/** Written when the initial account is created, so a reset does not bring it back */
+const SEEDED_FILE = path.join(DATA_DIR, "auth-seeded");
 
 export const SESSION_COOKIE = "ecoflow_session";
 /** "Remember me": the session lives 30 days past its last use */
 const REMEMBER_MS = 30 * 24 * 3600_000;
 /** Otherwise a browser-session cookie, and 12 hours past the last use */
 const SESSION_MS = 12 * 3600_000;
-/** A started setup must be confirmed with a code within this time */
-const SETUP_TTL_MS = 10 * 60_000;
+/** New credentials must be confirmed with a code from the app within this time */
+const PENDING_TTL_MS = 10 * 60_000;
 /** last_seen and the sliding expiry are written at most this often */
 const TOUCH_MS = 60_000;
 const ISSUER = "EcoFlow panel";
@@ -40,9 +44,12 @@ const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 interface Account {
   username: string;
   passwordHash: string;
-  totpSecret: string;
+  /** null for the initial account, which has no authenticator yet */
+  totpSecret: string | null;
   /** Step of the last accepted code, so a code works only once */
   lastTotpCounter: number;
+  /** The initial account: only replacing it is allowed */
+  mustChange: boolean;
   createdAt: string;
 }
 
@@ -55,7 +62,9 @@ interface SessionRow {
   user_agent: string | null;
 }
 
-interface PendingSetup {
+/** New credentials waiting for the first code from the authenticator app */
+interface Pending {
+  kind: "setup" | "change";
   username: string;
   passwordHash: string;
   totpSecret: string;
@@ -66,6 +75,10 @@ export interface AuthStatus {
   configured: boolean;
   authenticated: boolean;
   username: string | null;
+  /** Signed in with the initial account: only replacing it is allowed */
+  mustChange: boolean;
+  /** Whether sign-in asks for a code (not for the initial account) */
+  otpRequired: boolean;
 }
 
 export interface SessionInfo {
@@ -99,7 +112,7 @@ function isHttps(req: Request): boolean {
 class PanelAuth {
   private account: Account | null = null;
   private setupCode: string | null = null;
-  private pending = new Map<string, PendingSetup>();
+  private pending = new Map<string, Pending>();
 
   constructor() {
     db.exec(`
@@ -114,11 +127,24 @@ class PanelAuth {
     `);
   }
 
-  /** On server start: load the account, or announce the setup code. */
+  /** On server start: load the account, create the initial one, or announce the setup code. */
   start(): void {
     this.account = this.loadAccount();
     db.prepare("DELETE FROM auth_sessions WHERE expires_at < ?").run(Date.now());
     setInterval(() => db.prepare("DELETE FROM auth_sessions WHERE expires_at < ?").run(Date.now()), 3600_000).unref();
+    if (!this.account && !fs.existsSync(SEEDED_FILE)) {
+      this.saveAccount({
+        username: INITIAL_ACCOUNT.username,
+        passwordHash: INITIAL_ACCOUNT.passwordHash,
+        totpSecret: null,
+        lastTotpCounter: -1,
+        mustChange: true,
+        createdAt: new Date().toISOString(),
+      });
+      fs.writeFileSync(SEEDED_FILE, `${new Date().toISOString()}\n`, { mode: 0o600 });
+      db.prepare("DELETE FROM auth_sessions").run();
+      console.log(`[Auth] Created the initial panel account "${INITIAL_ACCOUNT.username}"; the first sign-in must replace it`);
+    }
     if (this.account) {
       fs.rmSync(SETUP_CODE_FILE, { force: true });
       return;
@@ -131,81 +157,79 @@ class PanelAuth {
   }
 
   status(req: IncomingMessage): AuthStatus {
-    const session = this.account ? this.sessionFor(req) : null;
+    const account = this.account;
+    const session = account ? this.sessionFor(req) : null;
     return {
-      configured: this.account !== null,
+      configured: account !== null,
       authenticated: session !== null,
-      username: session ? this.account!.username : null,
+      username: session ? account!.username : null,
+      mustChange: session !== null && account!.mustChange,
+      otpRequired: account?.totpSecret != null,
     };
   }
 
-  /** Step 1 of the setup: check the proof and the credentials, hand out the TOTP secret. */
+  /** Setup without an account (after a reset): check the proof of owning the server. */
   async startSetup(setupSecret: string, username: string, password: string) {
     if (this.account) throw new AuthError("The panel login is already set up", 409);
     const proof = setupSecret.trim();
     const byCode = this.setupCode !== null && normalizeCode(proof).length > 0 && sameText(normalizeCode(proof), normalizeCode(this.setupCode));
     const byKey = config.ecoflow.secretKey.length > 0 && sameText(proof, config.ecoflow.secretKey);
     if (!byCode && !byKey) throw new AuthError("Wrong setup code or secret key", 403);
-    const name = username.trim();
-    if (name.length < 1 || name.length > 64) throw new AuthError("The username must be 1 to 64 characters", 400);
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      throw new AuthError(`The password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400);
-    }
-
-    const now = Date.now();
-    for (const [id, setup] of this.pending) if (setup.expiresAt < now) this.pending.delete(id);
-    if (this.pending.size >= 5) throw new AuthError("Too many setups in progress; try again in a few minutes", 429);
-
-    const totpSecret = generateTotpSecret();
-    const setupId = crypto.randomBytes(16).toString("hex");
-    this.pending.set(setupId, { username: name, passwordHash: await hashPassword(password), totpSecret, expiresAt: now + SETUP_TTL_MS });
-    const uri = otpauthUri(totpSecret, name, ISSUER);
-    const svg = await QRCode.toString(uri, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
-    return {
-      setupId,
-      secret: totpSecret,
-      otpauthUri: uri,
-      qrCode: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
-    };
+    return this.prepare("setup", username, password);
   }
 
-  /** Step 2: the first code from the app proves it is set up; the account is saved. */
   finishSetup(setupId: string, otp: string, remember: boolean, req: Request, res: Response): AuthStatus {
     if (this.account) throw new AuthError("The panel login is already set up", 409);
-    const setup = this.pending.get(setupId);
-    if (!setup || setup.expiresAt < Date.now()) throw new AuthError("The setup expired; start again", 410);
-    const counter = verifyTotp(setup.totpSecret, otp, Date.now());
-    if (counter === null) throw new AuthError("Wrong code; check the time on your phone and try again", 401);
-
-    const account: Account = {
-      username: setup.username,
-      passwordHash: setup.passwordHash,
-      totpSecret: setup.totpSecret,
-      lastTotpCounter: counter,
-      createdAt: new Date().toISOString(),
-    };
+    const account = this.confirm("setup", setupId, otp);
     this.saveAccount(account);
-    this.pending.clear();
     this.setupCode = null;
     fs.rmSync(SETUP_CODE_FILE, { force: true });
     // Sessions from an earlier account (before a reset) end here
     db.prepare("DELETE FROM auth_sessions").run();
     this.createSession(remember, req, res);
-    return { configured: true, authenticated: true, username: account.username };
+    return this.status(req);
+  }
+
+  /**
+   * New username, password and authenticator for the signed-in owner. The initial account
+   * changes right away; a normal account proves itself with its password and a code.
+   */
+  async startChange(req: IncomingMessage, current: { password: string; otp: string }, username: string, password: string) {
+    const account = this.account;
+    if (!account || !this.sessionFor(req)) throw new AuthError("Sign in required");
+    if (!account.mustChange) {
+      const passwordOk = await verifyPassword(current.password, account.passwordHash);
+      const counter = account.totpSecret ? verifyTotp(account.totpSecret, current.otp, Date.now(), account.lastTotpCounter) : null;
+      if (!passwordOk || counter === null) throw new AuthError("Wrong current password or code", 403);
+      this.saveAccount({ ...account, lastTotpCounter: counter });
+    }
+    if (account.mustChange && sameText(username.trim(), INITIAL_ACCOUNT.username)) {
+      throw new AuthError(`Choose a username other than "${INITIAL_ACCOUNT.username}"`, 400);
+    }
+    return this.prepare("change", username, password);
+  }
+
+  /** Save the new credentials; every other session ends, this one stays. */
+  finishChange(req: IncomingMessage, setupId: string, otp: string): AuthStatus {
+    const session = this.sessionFor(req);
+    if (!this.account || !session) throw new AuthError("Sign in required");
+    this.saveAccount(this.confirm("change", setupId, otp));
+    db.prepare("DELETE FROM auth_sessions WHERE id_hash != ?").run(session.id_hash);
+    return this.status(req);
   }
 
   async login(username: string, password: string, otp: string, remember: boolean, req: Request, res: Response): Promise<AuthStatus> {
     const account = this.account;
     if (!account) throw new AuthError("The panel login is not set up yet", 409);
-    // Check all three every time, so the answer does not tell which one was wrong
+    // Check every part each time, so the answer does not tell which one was wrong
     const nameOk = sameText(username.trim(), account.username);
     const passwordOk = await verifyPassword(password, account.passwordHash);
-    const counter = verifyTotp(account.totpSecret, otp, Date.now(), account.lastTotpCounter);
+    const counter = account.totpSecret ? verifyTotp(account.totpSecret, otp, Date.now(), account.lastTotpCounter) : account.lastTotpCounter;
     if (!nameOk || !passwordOk || counter === null) throw new AuthError("Wrong username, password or code");
 
-    this.saveAccount({ ...account, lastTotpCounter: counter });
+    if (counter !== account.lastTotpCounter) this.saveAccount({ ...account, lastTotpCounter: counter });
     this.createSession(remember, req, res);
-    return { configured: true, authenticated: true, username: account.username };
+    return this.status(req);
   }
 
   logout(req: Request, res: Response): void {
@@ -250,8 +274,23 @@ class PanelAuth {
     return row;
   }
 
-  /** Express guard for /api: 401 without a valid session. */
+  /** A session that may use the panel: not the initial account waiting to be replaced. */
+  isAuthorized(req: IncomingMessage): boolean {
+    return this.sessionFor(req) !== null && !this.account!.mustChange;
+  }
+
+  /** Express guard for /api: 401 without a session, or while the initial account must change. */
   requireAuth = (req: Request, res: Response, next: NextFunction): void => {
+    if (this.isAuthorized(req)) {
+      next();
+      return;
+    }
+    const mustChange = this.sessionFor(req) !== null;
+    res.status(401).json({ error: mustChange ? "Replace the initial login first" : "Sign in required", authRequired: true });
+  };
+
+  /** Guard for the auth routes that only need a session, the initial account's included. */
+  requireSession = (req: Request, res: Response, next: NextFunction): void => {
     if (this.sessionFor(req)) {
       next();
       return;
@@ -259,12 +298,54 @@ class PanelAuth {
     res.status(401).json({ error: "Sign in required", authRequired: true });
   };
 
+  private async prepare(kind: Pending["kind"], username: string, password: string) {
+    const name = username.trim();
+    if (name.length < 1 || name.length > 64) throw new AuthError("The username must be 1 to 64 characters", 400);
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      throw new AuthError(`The password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400);
+    }
+    const now = Date.now();
+    for (const [id, pending] of this.pending) if (pending.expiresAt < now) this.pending.delete(id);
+    if (this.pending.size >= 5) throw new AuthError("Too many changes in progress; try again in a few minutes", 429);
+
+    const totpSecret = generateTotpSecret();
+    const setupId = crypto.randomBytes(16).toString("hex");
+    this.pending.set(setupId, { kind, username: name, passwordHash: await hashPassword(password), totpSecret, expiresAt: now + PENDING_TTL_MS });
+    const uri = otpauthUri(totpSecret, name, ISSUER);
+    const svg = await QRCode.toString(uri, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
+    return {
+      setupId,
+      secret: totpSecret,
+      otpauthUri: uri,
+      qrCode: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
+    };
+  }
+
+  /** The first code from the app proves it is set up; returns the account to save. */
+  private confirm(kind: Pending["kind"], setupId: string, otp: string): Account {
+    const pending = this.pending.get(setupId);
+    if (!pending || pending.kind !== kind || pending.expiresAt < Date.now()) throw new AuthError("This step expired; start again", 410);
+    const counter = verifyTotp(pending.totpSecret, otp, Date.now());
+    if (counter === null) throw new AuthError("Wrong code; check the time on your phone and try again", 401);
+    this.pending.clear();
+    return {
+      username: pending.username,
+      passwordHash: pending.passwordHash,
+      totpSecret: pending.totpSecret,
+      lastTotpCounter: counter,
+      mustChange: false,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
   private createSession(remember: boolean, req: Request, res: Response): void {
     const id = crypto.randomBytes(32).toString("base64url");
     const now = Date.now();
     const userAgent = String(req.headers["user-agent"] ?? "").slice(0, 200) || null;
     db.prepare("INSERT INTO auth_sessions (id_hash, created_at, last_seen_at, expires_at, remember, user_agent) VALUES (?, ?, ?, ?, ?, ?)")
       .run(hashSessionId(id), now, now, now + (remember ? REMEMBER_MS : SESSION_MS), remember ? 1 : 0, userAgent);
+    // req.headers.cookie is read again by status(): point it at the new session
+    req.headers.cookie = `${SESSION_COOKIE}=${encodeURIComponent(id)}`;
     res.cookie(SESSION_COOKIE, id, {
       httpOnly: true,
       sameSite: "lax",
@@ -278,12 +359,14 @@ class PanelAuth {
   private loadAccount(): Account | null {
     try {
       const saved = JSON.parse(fs.readFileSync(ACCOUNT_FILE, "utf8")) as Partial<Account>;
-      if (!saved.username || !saved.passwordHash || !saved.totpSecret) return null;
+      if (!saved.username || !saved.passwordHash) return null;
       return {
         username: saved.username,
         passwordHash: saved.passwordHash,
-        totpSecret: saved.totpSecret,
+        totpSecret: saved.totpSecret ?? null,
         lastTotpCounter: saved.lastTotpCounter ?? -1,
+        // Without an authenticator the account is the initial one, whatever the file says
+        mustChange: saved.mustChange === true || !saved.totpSecret,
         createdAt: saved.createdAt ?? "",
       };
     } catch {

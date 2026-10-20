@@ -39,6 +39,7 @@ server/data/app-account.json.tmp
 server/data/auth.json
 server/data/auth.json.tmp
 server/data/auth-setup-code.txt
+server/data/auth-seeded
 
 # Testing
 coverage

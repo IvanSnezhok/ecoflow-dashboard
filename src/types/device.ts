@@ -40,6 +40,10 @@ export interface AuthStatus {
   configured: boolean;
   authenticated: boolean;
   username: string | null;
+  /** Signed in with the initial account: replace it before anything else */
+  mustChange: boolean;
+  /** Sign-in asks for an authenticator code (not for the initial account) */
+  otpRequired: boolean;
 }
 
 export interface AuthSetupStart {

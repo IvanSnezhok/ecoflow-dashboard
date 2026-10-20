@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, LogOut, ShieldCheck } from 'lucide-react'
+import { CheckCircle, KeyRound, Loader2, LogOut, ShieldCheck } from 'lucide-react'
 import { api } from '@/services/api'
+import { ChangeCredentials } from '@/components/auth/AuthGate'
 import { wsClient } from '@/services/wsClient'
 import { useDeviceStore } from '@/stores/deviceStore'
 import type { AuthStatus } from '@/types/device'
@@ -29,6 +30,8 @@ export function PanelLoginSettings() {
   })
   const [busy, setBusy] = useState<'logout' | 'others' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [changing, setChanging] = useState(false)
+  const [changed, setChanged] = useState(false)
 
   const signOut = async () => {
     setBusy('logout')
@@ -111,6 +114,47 @@ export function PanelLoginSettings() {
         )}
       </div>
       {error && <p className="text-sm text-energy-red">{error}</p>}
+
+      <div className="pt-4 border-t space-y-3">
+        {changing ? (
+          <div className="max-w-sm space-y-3">
+            <p className="text-xs text-muted-foreground">
+              New username and password, and the panel added to your authenticator app again. Other devices are
+              signed out; this one stays signed in.
+            </p>
+            <ChangeCredentials
+              forced={false}
+              onDone={(next) => {
+                queryClient.setQueryData(['authStatus'], next)
+                void queryClient.invalidateQueries({ queryKey: ['authSessions'] })
+                setChanging(false)
+                setChanged(true)
+              }}
+            />
+            <button type="button" onClick={() => setChanging(false)} className="text-xs text-muted-foreground underline hover:text-foreground">
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setChanging(true)
+              setChanged(false)
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border hover:bg-accent"
+          >
+            <KeyRound className="w-4 h-4" />
+            Change username, password and authenticator
+          </button>
+        )}
+        {changed && (
+          <p className="flex items-center gap-2 text-sm text-energy-green">
+            <CheckCircle className="w-4 h-4" /> Saved; sign in with the new login from now on
+          </p>
+        )}
+      </div>
+
       <p className="text-[11px] text-muted-foreground">
         Lost the authenticator app? Delete <code className="font-mono">server/data/auth.json</code> on the server and
         restart the panel: it signs everyone out and offers the setup again, with a new setup code in the server log.

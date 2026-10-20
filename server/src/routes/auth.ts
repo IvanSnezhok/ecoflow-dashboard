@@ -53,6 +53,31 @@ router.post("/login", async (req: Request, res: Response) => {
   }
 });
 
+// New username, password and authenticator: right after signing in with the initial
+// account, or later from Settings (then with the current password and a code)
+router.post("/change/start", panelAuth.requireSession, async (req: Request, res: Response) => {
+  try {
+    res.json(await panelAuth.startChange(
+      req,
+      { password: text(req.body?.currentPassword), otp: text(req.body?.currentOtp) },
+      text(req.body?.username),
+      text(req.body?.password),
+    ));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+router.post("/change/finish", panelAuth.requireSession, (req: Request, res: Response) => {
+  try {
+    const status = panelAuth.finishChange(req, text(req.body?.setupId), text(req.body?.otp));
+    insertLog(null, "COMMAND", "panelLoginChange", JSON.stringify({ username: status.username }), JSON.stringify({ success: true }), true, null);
+    res.json(status);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 router.post("/logout", (req: Request, res: Response) => {
   panelAuth.logout(req, res);
   // The session row is gone, so this reads as signed out

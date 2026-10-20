@@ -94,6 +94,12 @@ export const api = {
   authSetupFinish: (setupId: string, otp: string, remember: boolean) =>
     client.post<AuthStatus>("/auth/setup/finish", { setupId, otp, remember }),
 
+  authChangeStart: (current: { password: string; otp: string }, username: string, password: string) =>
+    client.post<AuthSetupStart>("/auth/change/start", { currentPassword: current.password, currentOtp: current.otp, username, password }),
+
+  authChangeFinish: (setupId: string, otp: string) =>
+    client.post<AuthStatus>("/auth/change/finish", { setupId, otp }),
+
   getAuthSessions: () => client.get<AuthSession[]>("/auth/sessions"),
 
   revokeOtherSessions: () => client.post<AuthSession[]>("/auth/sessions/revoke-others"),

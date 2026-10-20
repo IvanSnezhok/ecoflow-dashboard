@@ -40,14 +40,18 @@ function RememberMe({ checked, onChange }: { checked: boolean; onChange: (value:
 }
 
 /** 6-digit code from the authenticator app */
-function CodeInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function CodeInput({ value, onChange, placeholder = '6-digit code from the app' }: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
   return (
     <input
       inputMode="numeric"
       autoComplete="one-time-code"
       pattern="[0-9]{6}"
       maxLength={6}
-      placeholder="6-digit code from the app"
+      placeholder={placeholder}
       value={value}
       onChange={(e) => onChange(e.target.value.replace(/\D/g, ''))}
       className={`${inputClass} font-mono tracking-widest`}
@@ -56,7 +60,174 @@ function CodeInput({ value, onChange }: { value: string; onChange: (value: strin
   )
 }
 
-function LoginScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
+/** New username and password, twice-typed */
+function NewCredentialsFields({ username, setUsername, password, setPassword, confirm, setConfirm }: {
+  username: string
+  setUsername: (value: string) => void
+  password: string
+  setPassword: (value: string) => void
+  confirm: string
+  setConfirm: (value: string) => void
+}) {
+  return (
+    <>
+      <input
+        autoComplete="username"
+        placeholder="New username"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        className={inputClass}
+        required
+      />
+      <input
+        type="password"
+        autoComplete="new-password"
+        placeholder="New password (10+ characters)"
+        minLength={10}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        className={inputClass}
+        required
+      />
+      <input
+        type="password"
+        autoComplete="new-password"
+        placeholder="Repeat the new password"
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+        className={inputClass}
+        required
+      />
+    </>
+  )
+}
+
+/** Second step of a setup or change: scan the QR code, confirm with the first code. */
+function AuthenticatorStep({ started, busy, error, children, onSubmit }: {
+  started: AuthSetupStart
+  busy: boolean
+  error: string | null
+  children?: ReactNode
+  onSubmit: (otp: string) => void
+}) {
+  const [otp, setOtp] = useState('')
+  return (
+    <>
+      <p className="text-xs text-muted-foreground">
+        Scan the code with Google Authenticator, Aegis, 1Password or a similar app, then enter the 6-digit code
+        it shows. Keep the app: every sign-in asks for a fresh code.
+      </p>
+      <img src={started.qrCode} alt="QR code for the authenticator app" className="mx-auto w-48 h-48 rounded bg-white p-2" />
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground">Can't scan? Enter the key by hand</summary>
+        <p className="mt-2 font-mono break-all select-all">{started.secret}</p>
+      </details>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          onSubmit(otp)
+          setOtp('')
+        }}
+        className="space-y-3"
+      >
+        <CodeInput value={otp} onChange={setOtp} />
+        {children}
+        {error && <p className="text-sm text-energy-red">{error}</p>}
+        <button type="submit" disabled={busy} className={buttonClass}>
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+          Confirm and save
+        </button>
+      </form>
+    </>
+  )
+}
+
+/**
+ * Replace the username, password and authenticator. `forced`: right after signing in with
+ * the initial account, so no current password or code is asked for.
+ */
+export function ChangeCredentials({ forced, onDone }: { forced: boolean; onDone: (status: AuthStatus) => void }) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [currentOtp, setCurrentOtp] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [started, setStarted] = useState<AuthSetupStart | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const start = async (e: FormEvent) => {
+    e.preventDefault()
+    if (password !== confirm) {
+      setError('The new passwords do not match')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      setStarted((await api.authChangeStart({ password: currentPassword, otp: currentOtp }, username.trim(), password)).data)
+      setCurrentPassword('')
+      setCurrentOtp('')
+      setPassword('')
+      setConfirm('')
+    } catch (err) {
+      setError(errorText(err))
+      setCurrentOtp('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const finish = async (otp: string) => {
+    if (!started) return
+    setBusy(true)
+    setError(null)
+    try {
+      onDone((await api.authChangeFinish(started.setupId, otp)).data)
+    } catch (err) {
+      setError(errorText(err))
+      if (/expired/i.test(errorText(err))) setStarted(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (started) return <AuthenticatorStep started={started} busy={busy} error={error} onSubmit={(otp) => void finish(otp)} />
+
+  return (
+    <form onSubmit={start} className="space-y-3">
+      {!forced && (
+        <>
+          <input
+            type="password"
+            autoComplete="current-password"
+            placeholder="Current password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            className={inputClass}
+            required
+          />
+          <CodeInput value={currentOtp} onChange={setCurrentOtp} placeholder="Current code from the app" />
+        </>
+      )}
+      <NewCredentialsFields
+        username={username}
+        setUsername={setUsername}
+        password={password}
+        setPassword={setPassword}
+        confirm={confirm}
+        setConfirm={setConfirm}
+      />
+      {error && <p className="text-sm text-energy-red">{error}</p>}
+      <button type="submit" disabled={busy} className={buttonClass}>
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+        Next: authenticator app
+      </button>
+    </form>
+  )
+}
+
+function LoginScreen({ otpRequired, onDone }: { otpRequired: boolean; onDone: (status: AuthStatus) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [otp, setOtp] = useState('')
@@ -98,7 +269,7 @@ function LoginScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
           className={inputClass}
           required
         />
-        <CodeInput value={otp} onChange={setOtp} />
+        {otpRequired && <CodeInput value={otp} onChange={setOtp} />}
         <RememberMe checked={remember} onChange={setRemember} />
         {error && <p className="text-sm text-energy-red">{error}</p>}
         <button type="submit" disabled={busy} className={buttonClass}>
@@ -110,13 +281,13 @@ function LoginScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
   )
 }
 
+/** After a reset (auth.json deleted): a new login, with proof of owning the server. */
 function SetupScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
   const [setupSecret, setSetupSecret] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [started, setStarted] = useState<AuthSetupStart | null>(null)
-  const [otp, setOtp] = useState('')
   const [remember, setRemember] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -141,8 +312,7 @@ function SetupScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
     }
   }
 
-  const finish = async (e: FormEvent) => {
-    e.preventDefault()
+  const finish = async (otp: string) => {
     if (!started) return
     setBusy(true)
     setError(null)
@@ -150,89 +320,53 @@ function SetupScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
       onDone((await api.authSetupFinish(started.setupId, otp, remember)).data)
     } catch (err) {
       setError(errorText(err))
-      setOtp('')
-      // An expired setup cannot be finished; start over
       if (/expired/i.test(errorText(err))) setStarted(null)
     } finally {
       setBusy(false)
     }
   }
 
-  if (!started) {
+  if (started) {
     return (
-      <Screen title="Set up the panel login">
-        <p className="text-xs text-muted-foreground">
-          This panel is reachable from the internet. Set a login with a password and an authenticator app
-          before using it. To prove the server is yours, enter the setup code from the server log
-          (<code className="font-mono">docker logs ecoflow-dashboard | grep "Setup code"</code>, also in{' '}
-          <code className="font-mono">server/data/auth-setup-code.txt</code>) or the EcoFlow{' '}
-          <code className="font-mono">ECOFLOW_SECRET_KEY</code> from <code className="font-mono">.env</code>.
-        </p>
-        <form onSubmit={start} className="space-y-3">
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder="Setup code or EcoFlow secret key"
-            value={setupSecret}
-            onChange={(e) => setSetupSecret(e.target.value)}
-            className={inputClass}
-            required
-          />
-          <input
-            autoComplete="username"
-            placeholder="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className={inputClass}
-            required
-          />
-          <input
-            type="password"
-            autoComplete="new-password"
-            placeholder="Password (10+ characters)"
-            minLength={10}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className={inputClass}
-            required
-          />
-          <input
-            type="password"
-            autoComplete="new-password"
-            placeholder="Repeat the password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className={inputClass}
-            required
-          />
-          {error && <p className="text-sm text-energy-red">{error}</p>}
-          <button type="submit" disabled={busy} className={buttonClass}>
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-            Next: authenticator app
-          </button>
-        </form>
+      <Screen title="Add the panel to your authenticator app">
+        <AuthenticatorStep started={started} busy={busy} error={error} onSubmit={(otp) => void finish(otp)}>
+          <RememberMe checked={remember} onChange={setRemember} />
+        </AuthenticatorStep>
       </Screen>
     )
   }
 
   return (
-    <Screen title="Add the panel to your authenticator app">
+    <Screen title="Set up the panel login">
       <p className="text-xs text-muted-foreground">
-        Scan the code with Google Authenticator, Aegis, 1Password or a similar app, then enter the 6-digit code
-        it shows. Keep the app: every sign-in asks for a fresh code.
+        This panel is reachable from the internet. Set a login with a password and an authenticator app
+        before using it. To prove the server is yours, enter the setup code from the server log
+        (<code className="font-mono">docker logs ecoflow-dashboard | grep "Setup code"</code>, also in{' '}
+        <code className="font-mono">server/data/auth-setup-code.txt</code>) or the EcoFlow{' '}
+        <code className="font-mono">ECOFLOW_SECRET_KEY</code> from <code className="font-mono">.env</code>.
       </p>
-      <img src={started.qrCode} alt="QR code for the authenticator app" className="mx-auto w-48 h-48 rounded bg-white p-2" />
-      <details className="text-xs">
-        <summary className="cursor-pointer text-muted-foreground">Can't scan? Enter the key by hand</summary>
-        <p className="mt-2 font-mono break-all select-all">{started.secret}</p>
-      </details>
-      <form onSubmit={finish} className="space-y-3">
-        <CodeInput value={otp} onChange={setOtp} />
-        <RememberMe checked={remember} onChange={setRemember} />
+      <form onSubmit={start} className="space-y-3">
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder="Setup code or EcoFlow secret key"
+          value={setupSecret}
+          onChange={(e) => setSetupSecret(e.target.value)}
+          className={inputClass}
+          required
+        />
+        <NewCredentialsFields
+          username={username}
+          setUsername={setUsername}
+          password={password}
+          setPassword={setPassword}
+          confirm={confirm}
+          setConfirm={setConfirm}
+        />
         {error && <p className="text-sm text-energy-red">{error}</p>}
         <button type="submit" disabled={busy} className={buttonClass}>
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-          Finish and sign in
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+          Next: authenticator app
         </button>
       </form>
     </Screen>
@@ -240,8 +374,9 @@ function SetupScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
 }
 
 /**
- * Shows the panel only with a session: the first-run setup while no login exists, else
- * the sign-in screen. A 401 from any API call (api.ts) brings the sign-in back.
+ * Shows the panel only with a session: the sign-in screen, the replacement of the initial
+ * account right after signing in with it, or the setup after a reset. A 401 from any API
+ * call (api.ts) brings the gate back.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
@@ -257,7 +392,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('auth:required', onRequired)
   }, [refetch])
 
-  const signedIn = (next: AuthStatus) => queryClient.setQueryData(['authStatus'], next)
+  const update = (next: AuthStatus) => queryClient.setQueryData(['authStatus'], next)
 
   if (isLoading) {
     return <div className="min-h-screen flex items-center justify-center text-xs font-mono text-muted-foreground">Loading…</div>
@@ -270,7 +405,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
       </Screen>
     )
   }
-  if (!status.configured) return <SetupScreen onDone={signedIn} />
-  if (!status.authenticated) return <LoginScreen onDone={signedIn} />
+  if (!status.configured) return <SetupScreen onDone={update} />
+  if (!status.authenticated) return <LoginScreen otpRequired={status.otpRequired} onDone={update} />
+  if (status.mustChange) {
+    return (
+      <Screen title="Replace the initial login">
+        <p className="text-xs text-muted-foreground">
+          You signed in with the initial account. Choose your own username and password and add an authenticator
+          app; the initial login stops working, and every sign-in will ask for a code from the app.
+        </p>
+        <ChangeCredentials forced onDone={update} />
+      </Screen>
+    )
+  }
   return <>{children}</>
 }

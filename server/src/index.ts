@@ -110,6 +110,7 @@ const authLimiter = rateLimit({
 });
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/setup", authLimiter);
+app.use("/api/auth/change", authLimiter);
 
 // The panel login (services/panelAuth.ts): /api/auth and /api/health stay open, every
 // other API route needs a session
@@ -151,7 +152,7 @@ app.get("*", (req, res) => {
 const wss = new WebSocketServer({
   server,
   path: "/ws",
-  verifyClient: (info, done) => (panelAuth.sessionFor(info.req) ? done(true) : done(false, 401, "Sign in required")),
+  verifyClient: (info, done) => (panelAuth.isAuthorized(info.req) ? done(true) : done(false, 401, "Sign in required")),
 });
 const clients = new Set<WebSocket>();
 let backgroundCollectionInProgress = false;
