@@ -46,6 +46,30 @@ one-time setup code from the server log or the `ECOFLOW_SECRET_KEY` from `.env`:
 docker logs ecoflow-dashboard 2>&1 | grep "Setup code"   # also in server/data/auth-setup-code.txt
 ```
 
+Invited users keep their logins through such a reset.
+
+### Users and roles
+
+Settings → Users (the owner's) invites other people. An invitation is a link for one
+role and a set of devices, all of them (also ones added later) or a chosen few; send it
+yourself. It works once, for 7 days, and is shown only when it is made (the panel keeps
+a hash). The invited person chooses a username and password and adds the panel to an
+authenticator app, like the owner did, and signs in the same way.
+
+| Role | Sees | Can change |
+| --- | --- | --- |
+| Owner | everything | everything: users, automation, Power reserve, Bluetooth/EcoFlow accounts, Slack, updates, logs |
+| Operator | the chosen devices; Power reserve when its device is one of them | AC output, charge limits, charging power, Bluetooth pause, data access check on those devices |
+| Viewer | the same | nothing |
+
+The server enforces this: other devices answer 404, other pages 403, and live updates
+carry only the user's devices. Commands log who sent them (`by` in the Logs page). The
+owner can change a user's role and devices (applies at once), sign them out everywhere
+or remove them. Each user changes their own login under Settings → Panel login; a user
+who lost the authenticator is removed and invited again. Invited users live in
+`server/data/panel-users.json` (password hashes and authenticator secrets; mode 600,
+git-ignored).
+
 ### In-panel GitHub updates
 
 This is deliberately disabled by default. The update endpoint can fetch code and restart the service, so do **not** expose it publicly without authentication/reverse-proxy protection.

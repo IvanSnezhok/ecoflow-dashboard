@@ -1,8 +1,11 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Loader2, LogIn, ShieldCheck, Zap } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { KeyRound, Loader2, LogIn, ShieldCheck, UserPlus, Zap } from 'lucide-react'
 import { api } from '@/services/api'
-import type { AuthSetupStart, AuthStatus } from '@/types/device'
+import { authStatusQuery } from '@/hooks/usePanelAccess'
+import { ROLE_COPY } from '@/lib/panelRoles'
+import type { AuthSetupStart, AuthStatus, InviteDetails } from '@/types/device'
 
 const inputClass = 'w-full h-10 rounded-md border bg-background px-3 text-sm'
 const buttonClass =
@@ -374,17 +377,130 @@ function SetupScreen({ onDone }: { onDone: (status: AuthStatus) => void }) {
 }
 
 /**
+ * An invitation link (/invite#<token>, made in Settings → Users): the invited person
+ * picks a username and password and adds an authenticator, then is signed in.
+ */
+function InviteScreen({ token, signedInAs, onLeave }: { token: string; signedInAs: string | null; onLeave: () => void }) {
+  const [details, setDetails] = useState<InviteDetails | null>(null)
+  const [invalid, setInvalid] = useState<string | null>(null)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [started, setStarted] = useState<AuthSetupStart | null>(null)
+  const [remember, setRemember] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.checkInvite(token).then((res) => setDetails(res.data)).catch((err) => setInvalid(errorText(err)))
+  }, [token])
+
+  const start = async (e: FormEvent) => {
+    e.preventDefault()
+    if (password !== confirm) {
+      setError('The passwords do not match')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      setStarted((await api.inviteStart(token, username.trim(), password)).data)
+      setPassword('')
+      setConfirm('')
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const finish = async (otp: string) => {
+    if (!started) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.inviteFinish(started.setupId, otp, remember)
+      // A full load, so nothing from an earlier session in this browser stays on screen
+      window.location.replace('/')
+    } catch (err) {
+      setError(errorText(err))
+      if (/expired|no longer valid/i.test(errorText(err))) setStarted(null)
+      setBusy(false)
+    }
+  }
+
+  if (invalid) {
+    return (
+      <Screen title="Invitation">
+        <p className="text-sm text-muted-foreground">{invalid}</p>
+        <button type="button" onClick={onLeave} className={buttonClass}>Go to the panel</button>
+      </Screen>
+    )
+  }
+  if (!details) {
+    return <div className="min-h-screen flex items-center justify-center text-xs font-mono text-muted-foreground">Loading…</div>
+  }
+  if (started) {
+    return (
+      <Screen title="Add the panel to your authenticator app">
+        <AuthenticatorStep started={started} busy={busy} error={error} onSubmit={(otp) => void finish(otp)}>
+          <RememberMe checked={remember} onChange={setRemember} />
+        </AuthenticatorStep>
+      </Screen>
+    )
+  }
+
+  const role = ROLE_COPY[details.role]
+  return (
+    <Screen title="You are invited to the EcoFlow panel">
+      <div className="rounded-md border bg-muted/30 p-3 space-y-1 text-sm">
+        <p>
+          Role: <span className="font-medium">{role.label}</span>
+        </p>
+        <p className="text-xs text-muted-foreground">{role.description}.</p>
+        <p className="text-xs">
+          Devices:{' '}
+          {details.devices === null ? 'all devices' : details.devices.map((device) => device.name).join(', ')}
+        </p>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Choose your username and password; next you add the panel to an authenticator app. The link works once,
+        until {new Date(details.expiresAt).toLocaleDateString()}.
+      </p>
+      {signedInAs && (
+        <p className="text-xs text-energy-yellow">
+          This browser is signed in as {signedInAs}. Accepting signs it in as the new user instead.
+        </p>
+      )}
+      <form onSubmit={start} className="space-y-3">
+        <NewCredentialsFields
+          username={username}
+          setUsername={setUsername}
+          password={password}
+          setPassword={setPassword}
+          confirm={confirm}
+          setConfirm={setConfirm}
+        />
+        {error && <p className="text-sm text-energy-red">{error}</p>}
+        <button type="submit" disabled={busy} className={buttonClass}>
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+          Next: authenticator app
+        </button>
+      </form>
+    </Screen>
+  )
+}
+
+/**
  * Shows the panel only with a session: the sign-in screen, the replacement of the initial
- * account right after signing in with it, or the setup after a reset. A 401 from any API
- * call (api.ts) brings the gate back.
+ * account right after signing in with it, the setup after a reset, or an invitation link.
+ * A 401 from any API call (api.ts) brings the gate back.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
-  const { data: status, isLoading, error, refetch } = useQuery({
-    queryKey: ['authStatus'],
-    queryFn: async () => (await api.getAuthStatus()).data,
-    staleTime: Infinity,
-  })
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { data: status, isLoading, error, refetch } = useQuery(authStatusQuery)
 
   useEffect(() => {
     const onRequired = () => void refetch()
@@ -406,6 +522,15 @@ export function AuthGate({ children }: { children: ReactNode }) {
     )
   }
   if (!status.configured) return <SetupScreen onDone={update} />
+  if (location.pathname === '/invite') {
+    return (
+      <InviteScreen
+        token={location.hash.slice(1)}
+        signedInAs={status.authenticated ? status.username : null}
+        onLeave={() => navigate('/', { replace: true })}
+      />
+    )
+  }
   if (!status.authenticated) return <LoginScreen otpRequired={status.otpRequired} onDone={update} />
   if (status.mustChange) {
     return (

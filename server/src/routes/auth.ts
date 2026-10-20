@@ -78,6 +78,34 @@ router.post("/change/finish", panelAuth.requireSession, (req: Request, res: Resp
   }
 });
 
+// Accepting an invitation (routes/users.ts makes them). The token from the link travels
+// in the body, so it stays out of the request log (lib/redact.ts masks it there too).
+router.post("/invite/check", (req: Request, res: Response) => {
+  try {
+    res.json(panelAuth.inviteDetails(text(req.body?.token)));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+router.post("/invite/start", async (req: Request, res: Response) => {
+  try {
+    res.json(await panelAuth.startInvite(text(req.body?.token), text(req.body?.username), text(req.body?.password)));
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
+router.post("/invite/finish", (req: Request, res: Response) => {
+  try {
+    const status = panelAuth.finishInvite(text(req.body?.setupId), text(req.body?.otp), req.body?.remember === true, req, res);
+    insertLog(null, "COMMAND", "panelInviteAccepted", JSON.stringify({ username: status.username, role: status.role }), JSON.stringify({ success: true }), true, null);
+    res.json(status);
+  } catch (error) {
+    fail(res, error);
+  }
+});
+
 router.post("/logout", (req: Request, res: Response) => {
   panelAuth.logout(req, res);
   // The session row is gone, so this reads as signed out

@@ -35,7 +35,9 @@ import { resilienceRouter } from "./routes/resilience.js";
 import bleRouter from "./routes/ble.js";
 import appAccountRouter from "./routes/appAccount.js";
 import authRouter from "./routes/auth.js";
+import usersRouter from "./routes/users.js";
 import { panelAuth } from "./services/panelAuth.js";
+import { canAccessDevice } from "./lib/permissions.js";
 import { appChannel } from "./services/appChannel.js";
 import { redactBody } from "./lib/redact.js";
 import { processResilienceAutomation } from "./services/resilienceService.js";
@@ -111,6 +113,7 @@ const authLimiter = rateLimit({
 app.use("/api/auth/login", authLimiter);
 app.use("/api/auth/setup", authLimiter);
 app.use("/api/auth/change", authLimiter);
+app.use("/api/auth/invite", authLimiter);
 
 // The panel login (services/panelAuth.ts): /api/auth and /api/health stay open, every
 // other API route needs a session
@@ -126,14 +129,17 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api", panelAuth.requireAuth);
 
-// Routes
+// Routes. Invited users (lib/permissions.ts) reach their own devices through /api/devices,
+// which checks each one, and read Power reserve when its device is theirs; the rest is
+// the owner's.
 app.use("/api/devices", devicesRouter);
-app.use("/api/logs", logsRouter);
-app.use("/api/automation", automationRouter);
-app.use("/api/system", systemRouter);
-app.use("/api/resilience", resilienceRouter);
-app.use("/api/ble", bleRouter);
-app.use("/api/app-account", appAccountRouter);
+app.use("/api/resilience", panelAuth.requirePowerReserve, resilienceRouter);
+app.use("/api/logs", panelAuth.requireOwner, logsRouter);
+app.use("/api/automation", panelAuth.requireOwner, automationRouter);
+app.use("/api/system", panelAuth.requireOwner, systemRouter);
+app.use("/api/ble", panelAuth.requireOwner, bleRouter);
+app.use("/api/app-account", panelAuth.requireOwner, appAccountRouter);
+app.use("/api/users", panelAuth.requireOwner, usersRouter);
 
 // Serve static files from the frontend build
 const frontendDistPath = path.join(__dirname, "../../dist");
@@ -154,12 +160,26 @@ const wss = new WebSocketServer({
   path: "/ws",
   verifyClient: (info, done) => (panelAuth.isAuthorized(info.req) ? done(true) : done(false, 401, "Sign in required")),
 });
-const clients = new Set<WebSocket>();
+// Each socket remembers its session: device updates go only to users who may see the
+// device, and a socket whose session ends (signed out, user removed) is closed
+const clients = new Map<WebSocket, { sessionHash: string; userId: string }>();
 let backgroundCollectionInProgress = false;
 
-wss.on("connection", (ws) => {
+const SIGNED_OUT = 4401;
+setInterval(() => {
+  clients.forEach((client, ws) => {
+    if (!panelAuth.sessionUser(client.sessionHash, client.userId)) ws.close(SIGNED_OUT, "Signed out");
+  });
+}, 30_000).unref();
+
+wss.on("connection", (ws, req) => {
+  const client = panelAuth.socketUser(req);
+  if (!client) {
+    ws.close(SIGNED_OUT, "Signed out");
+    return;
+  }
   console.log("WebSocket client connected");
-  clients.add(ws);
+  clients.set(ws, client);
 
   ws.on("close", () => {
     console.log("WebSocket client disconnected");
@@ -189,9 +209,14 @@ mqttService.on("message", (message) => {
     data: message,
   });
 
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(wsMessage);
+  clients.forEach((client, ws) => {
+    const user = panelAuth.userById(client.userId);
+    if (!user) {
+      ws.close(SIGNED_OUT, "Signed out");
+      return;
+    }
+    if (ws.readyState === WebSocket.OPEN && canAccessDevice(user, message.sn)) {
+      ws.send(wsMessage);
     }
   });
 });
@@ -201,9 +226,9 @@ mqttService.on("connected", () => {
     type: "mqttStatus",
     data: { connected: true },
   });
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(wsMessage);
+  clients.forEach((_client, ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(wsMessage);
     }
   });
   insertLog(null, "CONNECTION", "mqttConnect", null, null, true, null);
@@ -214,9 +239,9 @@ mqttService.on("disconnected", () => {
     type: "mqttStatus",
     data: { connected: false },
   });
-  clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(wsMessage);
+  clients.forEach((_client, ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(wsMessage);
     }
   });
   insertLog(null, "CONNECTION", "mqttDisconnect", null, null, true, null);

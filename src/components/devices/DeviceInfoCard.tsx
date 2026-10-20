@@ -5,6 +5,7 @@ import { Bluetooth, Cpu, Wifi, WifiOff } from 'lucide-react'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 import { parseServerTimestamp } from '@/components/charts'
+import { usePanelAccess } from '@/hooks/usePanelAccess'
 import type { BleStatus, ConnectionSummary, DataSource } from '@/types/device'
 
 interface DeviceInfoCardProps {
@@ -133,6 +134,7 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
   onChange: () => void
 }) {
   const [busy, setBusy] = useState(false)
+  const { canControl, isOwner } = usePanelAccess()
   const device = ble.device
 
   const act = async (run: () => Promise<unknown>) => {
@@ -148,7 +150,8 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
   }
 
   let status: ReactNode
-  if (!ble.switchedOn) status = <Link to="/settings" className="text-muted-foreground underline">Off · turn on in Settings</Link>
+  // The Bluetooth settings are the owner's
+  if (!ble.switchedOn) status = isOwner ? <Link to="/settings" className="text-muted-foreground underline">Off · turn on in Settings</Link> : <span className="text-muted-foreground">Off</span>
   else if (!ble.reachable) status = <span className="text-energy-red">Bridge offline</span>
   else if (ble.scannerError) status = <span className="text-energy-red">Adapter error</span>
   else if (!device) status = <span className="text-muted-foreground">Not in range</span>
@@ -156,7 +159,7 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
   else if (device.state === 'paused' && device.pausedUntil)
     status = <span className="text-energy-yellow">Paused until {formatMoment(new Date(device.pausedUntil).toISOString())}</span>
   else if (device.state === 'waiting_for_user_id')
-    status = <Link to="/settings" className="text-energy-yellow underline">Sign in to EcoFlow in Settings</Link>
+    status = isOwner ? <Link to="/settings" className="text-energy-yellow underline">Sign in to EcoFlow in Settings</Link> : <span className="text-energy-yellow">Not signed in to EcoFlow</span>
   else status = <span className="text-energy-yellow">{BLE_STATES[device.state] ?? device.state.replace(/_/g, ' ')}</span>
 
   const quality = device?.rssi != null ? bleQuality(device.rssi) : null
@@ -189,7 +192,7 @@ function BleSection({ ble, dataSource, now, serialNumber, onChange }: {
         )}
         {problem && <Row label="Error" value={<span className="text-energy-red">{problem}</span>} mono={false} />}
       </div>
-      {device && ble.reachable && ble.switchedOn && (
+      {device && ble.reachable && ble.switchedOn && canControl && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {device.state === 'paused' ? (
             <button
