@@ -395,8 +395,11 @@ schedule and even while schedule data is stale. It refuses to do so below the mi
 SOC and otherwise pauses commands while schedule data is stale. After the recovery
 delay it turns AC off only when this automation turned it on **and the AC output load
 has stayed below the threshold (50 W by default, "Вимк. AC нижче") for 2 minutes** —
-sockets that still feed something are never cut. YASNO schedules remain advisory and
-can change without notice.
+sockets that still feed something are never cut. That ownership and the recovery clock
+are kept in `resilience_ac_state`, so a dashboard restart during an outage still switches
+AC off afterwards; AC seen off (switched by hand, on the device or in the app) is no
+longer the automation's, and a later manual switch-on is left alone. YASNO schedules
+remain advisory and can change without notice.
 
 **Light / no-light timeline.** Grid presence is recorded per minute from the device
 (table `grid_minutes`, together with the energy delivered by its outputs and the time

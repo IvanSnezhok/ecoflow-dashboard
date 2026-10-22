@@ -2,11 +2,14 @@ import { ecoflowApi } from './ecoflowApi.js'
 import {
   getGridEpisodeStart,
   getGridMinutes,
+  getLastAcCommand,
   getLastGridMinute,
   getLoadBuckets,
   getOutageScheduleDays,
+  getResilienceAcState,
   getResilienceSettings,
   insertLog,
+  saveResilienceAcState,
   upsertGridMinute,
   upsertOutageScheduleDay,
   type OutageScheduleDayRow,
@@ -174,6 +177,9 @@ function withQuery(url: string, values: Record<string, string | number>): string
 let cachedStatus: ResilienceStatus = { risk: 'none', events: [] }
 let lastScheduleFetch = 0
 let lastScheduleKey = ''
+// Ownership and the recovery clock are stored per device (resilience_ac_state), so AC the
+// automation switched on is still switched off after a restart.
+let acStateDeviceId: number | undefined
 let automationOwnsAc = false
 let lastAcCommandAt = 0
 let lastRiskAt = 0
@@ -384,7 +390,47 @@ export async function processResilienceAutomation(
   if (settings.notifySlack) await sendAlerts(metrics.soc, settings, acOutputWatts, finishedOutage(grid))
 }
 
+function restoreAcState(deviceId: number): void {
+  acStateDeviceId = deviceId
+  lastAcCommandAt = 0
+  lowLoadSince = null
+  try {
+    const row = getResilienceAcState(deviceId)
+    // Before this state was stored, ownership was known only from the last AC command in the log.
+    automationOwnsAc = row ? row.owns_ac === 1 : getLastAcCommand(deviceId) === 'resilienceAcOn'
+    lastRiskAt = row?.last_risk_at_ms ?? 0
+  } catch (error) {
+    console.error('[Resilience] Failed to read AC automation state:', error)
+    automationOwnsAc = false
+    lastRiskAt = 0
+  }
+}
+
+function saveAcState(deviceId: number): void {
+  try {
+    saveResilienceAcState(deviceId, { owns_ac: automationOwnsAc ? 1 : 0, last_risk_at_ms: lastRiskAt })
+  } catch (error) {
+    console.error('[Resilience] Failed to store AC automation state:', error)
+  }
+}
+
 async function runAcAutomation(
+  settings: ResilienceSettings,
+  metrics: { deviceId: number; serialNumber: string; soc: number },
+  rawData: Record<string, unknown>,
+  acOutputWatts: number,
+): Promise<AcAction> {
+  if (acStateDeviceId !== metrics.deviceId) restoreAcState(metrics.deviceId)
+  const before = { automationOwnsAc, lastRiskAt }
+  const action = await switchAc(settings, metrics, rawData, acOutputWatts)
+  // The recovery clock matters only for AC the automation owns.
+  if (automationOwnsAc !== before.automationOwnsAc || (automationOwnsAc && lastRiskAt !== before.lastRiskAt)) {
+    saveAcState(metrics.deviceId)
+  }
+  return action
+}
+
+async function switchAc(
   settings: ResilienceSettings,
   metrics: { deviceId: number; serialNumber: string; soc: number },
   rawData: Record<string, unknown>,
@@ -400,6 +446,7 @@ async function runAcAutomation(
   })
   lastRiskAt = decision.lastRiskAt
   lowLoadSince = decision.lowLoadSince
+  automationOwnsAc = decision.automationOwnsAc
   if (decision.action !== 'on' && decision.action !== 'off') return decision.action
 
   const enable = decision.action === 'on'

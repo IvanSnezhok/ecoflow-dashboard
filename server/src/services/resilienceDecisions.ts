@@ -33,26 +33,32 @@ export interface AcDecision {
   action: Exclude<AcAction, 'failed'>
   lastRiskAt: number
   lowLoadSince: number | null
+  /** Ownership before this decision's command; a successful 'on' or 'off' then sets it. */
+  automationOwnsAc: boolean
 }
 
 export function decideAcAction(input: AcDecisionInput): AcDecision {
   const lowLoad = input.acOutputWatts < input.acOffMaxWatts
   const lowLoadSince = lowLoad ? input.lowLoadSince ?? input.nowMs : null
+  const inCooldown = input.nowMs - input.lastAcCommandAt < AC_COMMAND_COOLDOWN_MS
+  // AC seen off (switched by hand, on the device or in the app) is no longer the automation's,
+  // so a later manual switch-on is left alone. Right after a command the device may lag.
+  const automationOwnsAc = input.automationOwnsAc && (input.acEnabled || inCooldown)
   // A blackout the device actually sees overrides a stale or quiet schedule.
   if (!input.autoAc || (input.risk === 'stale' && !input.gridOff)) {
-    return { action: 'none', lastRiskAt: input.lastRiskAt, lowLoadSince }
+    return { action: 'none', lastRiskAt: input.lastRiskAt, lowLoadSince, automationOwnsAc }
   }
 
   const riskRequiresAc = input.gridOff || RISK_REQUIRES_AC.includes(input.risk)
   const lastRiskAt = riskRequiresAc ? input.nowMs : input.lastRiskAt
-  const inRecoveryDelay = input.automationOwnsAc && input.nowMs - lastRiskAt < input.recoveryDelayMinutes * 60_000
+  const inRecoveryDelay = automationOwnsAc && input.nowMs - lastRiskAt < input.recoveryDelayMinutes * 60_000
   const shouldBeOn = riskRequiresAc || inRecoveryDelay
-  const result = (action: AcDecision['action']): AcDecision => ({ action, lastRiskAt, lowLoadSince })
+  const result = (action: AcDecision['action']): AcDecision => ({ action, lastRiskAt, lowLoadSince, automationOwnsAc })
 
-  if (input.nowMs - input.lastAcCommandAt < AC_COMMAND_COOLDOWN_MS) return result('none')
+  if (inCooldown) return result('none')
   if (shouldBeOn && input.soc < input.minSoc) return result('blocked-low-soc')
   if (shouldBeOn && !input.acEnabled) return result('on')
-  if (!shouldBeOn && input.acEnabled && input.automationOwnsAc) {
+  if (!shouldBeOn && input.acEnabled && automationOwnsAc) {
     // Never cut sockets that are still feeding something.
     const lowLongEnough = lowLoadSince !== null && input.nowMs - lowLoadSince >= LOW_LOAD_CONFIRM_MS
     return result(lowLongEnough ? 'off' : 'waiting-load')

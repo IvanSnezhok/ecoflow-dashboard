@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test:profiles": "npm run build && node dist/services/deviceProfiles.test.js",
-    "test:resilience": "npm run build && node dist/services/resilienceDecisions.test.js && node dist/services/resilienceService.test.js && node dist/services/powerTimeline.test.js",
+    "test:resilience": "npm run build && node dist/services/resilienceDecisions.test.js && node dist/services/resilienceService.test.js && node dist/services/resilienceAcState.test.js && node dist/services/powerTimeline.test.js",
     "test:codec": "npm run build && node dist/lib/rawDataCodec.test.js",
     "test:sample": "npm run build && node dist/services/stateSample.test.js && node dist/services/extraBatteries.test.js",
     "test:info": "npm run build && node dist/services/deviceInfo.test.js",

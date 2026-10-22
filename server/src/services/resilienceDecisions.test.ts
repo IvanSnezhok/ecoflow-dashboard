@@ -53,15 +53,24 @@ assert.equal(decide({ ...owned, lastRiskAt: NOW - 16 * MIN }).action, 'off')
 assert.equal(decide({ ...owned, lastRiskAt: NOW - 1 * MIN, recoveryDelayMinutes: 0 }).action, 'off')
 // AC that someone else turned on is never turned off.
 assert.equal(decide({ ...owned, automationOwnsAc: false, lastRiskAt: NOW - 60 * MIN }).action, 'none')
+// Owned AC switched off by hand is released: the recovery delay does not switch it back on...
+assert.deepEqual(brief({ ...owned, acEnabled: false, lastRiskAt: NOW - 5 * MIN }), { action: 'none', lastRiskAt: NOW - 5 * MIN })
+assert.equal(decide({ ...owned, acEnabled: false, lastRiskAt: NOW - 5 * MIN }).automationOwnsAc, false)
+// ...an outage still does, and the service takes ownership again once the command succeeds.
+assert.deepEqual(decide({ ...owned, risk: 'active', acEnabled: false }),
+  { action: 'on', lastRiskAt: NOW, lowLoadSince: base.lowLoadSince, automationOwnsAc: false })
+// Right after the automation's own command the device may still report AC off.
+assert.equal(decide({ ...owned, acEnabled: false, lastAcCommandAt: NOW - 20_000 }).automationOwnsAc, true)
+assert.equal(decide({ ...owned, lastRiskAt: NOW - 16 * MIN }).automationOwnsAc, true)
 
 // Load on the sockets: AC stays on until it drops below the threshold and stays there.
 const recovered = { ...owned, lastRiskAt: NOW - 60 * MIN }
 assert.deepEqual(decide({ ...recovered, acOutputWatts: 120, lowLoadSince: null }),
-  { action: 'waiting-load', lastRiskAt: NOW - 60 * MIN, lowLoadSince: null })
+  { action: 'waiting-load', lastRiskAt: NOW - 60 * MIN, lowLoadSince: null, automationOwnsAc: true })
 assert.equal(decide({ ...recovered, acOutputWatts: 50, lowLoadSince: null }).action, 'waiting-load')
 // Load just dropped: the clock starts, AC still waits for the confirmation period.
 assert.deepEqual(decide({ ...recovered, acOutputWatts: 30, lowLoadSince: null }),
-  { action: 'waiting-load', lastRiskAt: NOW - 60 * MIN, lowLoadSince: NOW })
+  { action: 'waiting-load', lastRiskAt: NOW - 60 * MIN, lowLoadSince: NOW, automationOwnsAc: true })
 assert.equal(decide({ ...recovered, acOutputWatts: 30, lowLoadSince: NOW - LOW_LOAD_CONFIRM_MS + 1000 }).action, 'waiting-load')
 assert.equal(decide({ ...recovered, acOutputWatts: 30, lowLoadSince: NOW - LOW_LOAD_CONFIRM_MS }).action, 'off')
 // A load spike resets the low-load clock.
