@@ -175,6 +175,15 @@ export function initDatabase(): void {
       FOREIGN KEY (device_id) REFERENCES devices(id)
     );
 
+    -- AC the outage automation switched on itself, so a restart can still switch it off
+    CREATE TABLE IF NOT EXISTS resilience_ac_state (
+      device_id INTEGER PRIMARY KEY,
+      owns_ac INTEGER NOT NULL DEFAULT 0, -- 1 = switched on by the automation, on ever since
+      last_risk_at_ms INTEGER NOT NULL DEFAULT 0, -- last moment an outage risk needed AC
+      updated_at_ms INTEGER NOT NULL,
+      FOREIGN KEY (device_id) REFERENCES devices(id)
+    );
+
     -- Create indexes
     CREATE INDEX IF NOT EXISTS idx_device_states_device_timestamp
       ON device_states(device_id, timestamp);
@@ -1025,6 +1034,35 @@ export function upsertResilienceSettings(values: Omit<ResilienceSettingsRow, 'id
     values.min_soc, values.reserve_soc, values.battery_capacity_wh,
     values.inverter_efficiency, values.load_profile, values.ac_off_max_watts
   )
+}
+
+export interface ResilienceAcStateRow {
+  owns_ac: number
+  last_risk_at_ms: number
+}
+
+export function getResilienceAcState(deviceId: number): ResilienceAcStateRow | undefined {
+  return db.prepare('SELECT owns_ac, last_risk_at_ms FROM resilience_ac_state WHERE device_id = ?')
+    .get(deviceId) as ResilienceAcStateRow | undefined
+}
+
+export function saveResilienceAcState(deviceId: number, row: ResilienceAcStateRow): void {
+  db.prepare(`
+    INSERT INTO resilience_ac_state (device_id, owns_ac, last_risk_at_ms, updated_at_ms) VALUES (?, ?, ?, ?)
+    ON CONFLICT(device_id) DO UPDATE SET
+      owns_ac=excluded.owns_ac, last_risk_at_ms=excluded.last_risk_at_ms, updated_at_ms=excluded.updated_at_ms
+  `).run(deviceId, row.owns_ac, row.last_risk_at_ms, Date.now())
+}
+
+/** Name of the newest successful AC command logged for a device, from the panel or the outage automation. */
+export function getLastAcCommand(deviceId: number): string | undefined {
+  const row = db.prepare(`
+    SELECT operation_name FROM operation_logs
+    WHERE device_id = ? AND operation_type = 'COMMAND' AND success = 1
+      AND operation_name IN ('setAcOutput', 'resilienceAcOn', 'resilienceAcOff')
+    ORDER BY timestamp DESC, id DESC LIMIT 1
+  `).get(deviceId) as { operation_name: string } | undefined
+  return row?.operation_name
 }
 
 // ==================== Grid timeline & load history ====================
