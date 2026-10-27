@@ -25,6 +25,7 @@ const loadPeriodSchema = z.object({
 const settingsSchema = z.object({
   deviceId: z.number().int().positive().optional(),
   enabled: z.boolean(),
+  mode: z.enum(['hybrid', 'grid']).default('hybrid'),
   autoAc: z.boolean(),
   notifySlack: z.boolean().default(true),
   regionId: z.number().int().positive().optional(),
@@ -63,8 +64,13 @@ resilienceRouter.put('/settings', (req, res) => {
     res.status(400).json({ success: false, error: 'Selected device does not exist' })
     return
   }
-  if (value.enabled && (!value.deviceId || !value.regionId || !value.dsoId || !value.outageGroup)) {
-    res.status(400).json({ success: false, error: 'Device, region, operator and outage group are required when enabled' })
+  if (value.enabled && !value.deviceId) {
+    res.status(400).json({ success: false, error: 'Device is required when enabled' })
+    return
+  }
+  // The grid-only mode reads nothing from YASNO, so it needs no address
+  if (value.enabled && value.mode === 'hybrid' && (!value.regionId || !value.dsoId || !value.outageGroup)) {
+    res.status(400).json({ success: false, error: 'Region, operator and outage group are required in hybrid mode' })
     return
   }
   if (value.reserveSoc >= value.minSoc) {
@@ -72,7 +78,7 @@ resilienceRouter.put('/settings', (req, res) => {
     return
   }
   upsertResilienceSettings({
-    device_id: value.deviceId ?? null, enabled: value.enabled ? 1 : 0, auto_ac: value.autoAc ? 1 : 0, notify_slack: value.notifySlack ? 1 : 0,
+    device_id: value.deviceId ?? null, enabled: value.enabled ? 1 : 0, mode: value.mode, auto_ac: value.autoAc ? 1 : 0, notify_slack: value.notifySlack ? 1 : 0,
     region_id: value.regionId ?? null, dso_id: value.dsoId ?? null, outage_group: value.outageGroup ?? null,
     warning_lead_minutes: value.warningLeadMinutes, recovery_delay_minutes: value.recoveryDelayMinutes,
     min_soc: value.minSoc, reserve_soc: value.reserveSoc, battery_capacity_wh: value.batteryCapacityWh,

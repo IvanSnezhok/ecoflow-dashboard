@@ -388,6 +388,15 @@ now only a fallback for slots without enough history, then the current load. The
 page shows the source used, the 48-slot average, and the expected consumption for the
 rest of the current outage window or the whole next one.
 
+**Modes.** *Hybrid* (the default) uses the YASNO schedule and the device's own grid
+reading, as described below, and needs the outage group. *Without YASNO* ("Без YASNO: лише
+факт") needs no address and sends nothing to YASNO: AC is switched on only when the device
+reports no mains on its AC input (two 10 s readings in a row, so about 20–30 s after the
+outage), and switched off the same way as below once the grid is back. In this mode the
+banner shows the grid state, the timeline has no schedule strip, and Slack gets only the
+grid loss and return, AC switches and the low-SOC block. For no break at all, keep AC on:
+the device then takes over from the battery by itself.
+
 AC automation has a separate opt-in switch. It turns AC on inside the configured
 warning window, during an active window or YASNO emergency shutdowns, and **whenever
 the device itself reports no mains on its AC input** (`inv.acInVol`), even outside the

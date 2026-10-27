@@ -5,9 +5,16 @@ export interface LoadPeriod {
   label?: string
 }
 
+/**
+ * hybrid: the YASNO schedule and the device's own grid reading both switch AC on.
+ * grid: only the device losing mains does; no YASNO address is needed or used.
+ */
+export type ResilienceMode = 'hybrid' | 'grid'
+
 export interface ResilienceSettings {
   deviceId?: number
   enabled: boolean
+  mode: ResilienceMode
   autoAc: boolean
   notifySlack: boolean
   regionId?: number
@@ -102,6 +109,8 @@ export interface LoadProfileStatus {
 }
 
 export interface ResilienceStatus {
+  /** Saved mode; in 'grid' the schedule fields stay empty and risk stays 'none'. */
+  mode?: ResilienceMode
   risk: 'none' | 'watch' | 'imminent' | 'active' | 'emergency' | 'stale'
   currentEvent?: OutageEvent
   nextEvent?: OutageEvent

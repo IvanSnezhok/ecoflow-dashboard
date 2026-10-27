@@ -54,19 +54,19 @@ function Span({ day, start, end, className, style, label, onHover }: {
   />
 }
 
-function DayRow({ day, onHover }: { day: PowerDay; onHover: (hover: Hover | null) => void }) {
+function DayRow({ day, withSchedule, onHover }: { day: PowerDay; withSchedule: boolean; onHover: (hover: Hover | null) => void }) {
   const { stats } = day
   const scheduleLabel = day.scheduleSource === 'planned' ? 'графік' : day.scheduleSource === 'probable' ? 'імовірний' : 'без графіка'
   return <div className="grid grid-cols-[64px_1fr] sm:grid-cols-[72px_1fr_minmax(0,260px)] gap-x-3 gap-y-1 items-center py-2 border-b last:border-b-0">
     <div>
       <div className="text-xs font-mono font-semibold">{dayFormat.format(new Date(`${day.day}T12:00:00Z`))}</div>
-      <div className="text-[9px] font-mono uppercase text-muted-foreground">{day.future ? 'завтра' : scheduleLabel}</div>
+      {withSchedule && <div className="text-[9px] font-mono uppercase text-muted-foreground">{day.future ? 'завтра' : scheduleLabel}</div>}
     </div>
     <div className="space-y-1 min-w-0">
-      <div className="relative h-1.5 rounded-sm bg-muted/60 overflow-hidden" aria-label="За графіком">
+      {withSchedule && <div className="relative h-1.5 rounded-sm bg-muted/60 overflow-hidden" aria-label="За графіком">
         {day.scheduledOff.map(window => <Span key={window.start} day={day} start={window.start} end={window.end}
           style={{ background: scheduledStripes }} label={`за графіком без світла (${scheduleLabel})`} onHover={onHover} />)}
-      </div>
+      </div>}
       <div className="relative h-4 rounded-sm bg-muted/30 overflow-hidden" aria-label="Фактично">
         {day.segments.map(segment => <Span key={segment.start} day={day} start={segment.start} end={segment.end}
           className={cn(stateCopy[segment.state].bar, 'border-r-2 border-card last:border-r-0')} label={stateCopy[segment.state].label} onHover={onHover} />)}
@@ -76,8 +76,8 @@ function DayRow({ day, onHover }: { day: PowerDay; onHover: (hover: Hover | null
       {day.future
         ? <span>За графіком без світла: <b className="text-foreground">{formatMinutes(stats.scheduledOffMinutes)}</b></span>
         : <>
-          <span title="Світло було, хоча за графіком мало не бути">+<b className="text-foreground">{formatMinutes(stats.extraOnMinutes)}</b> зі світлом</span>
-          <span title="Без світла (фактично)">без світла <b className="text-foreground">{formatMinutes(stats.offMinutes)}</b>{stats.unplannedOffMinutes > 0 && <> (поза графіком {formatMinutes(stats.unplannedOffMinutes)})</>}</span>
+          {withSchedule && <span title="Світло було, хоча за графіком мало не бути">+<b className="text-foreground">{formatMinutes(stats.extraOnMinutes)}</b> зі світлом</span>}
+          <span title="Без світла (фактично)">без світла <b className="text-foreground">{formatMinutes(stats.offMinutes)}</b>{withSchedule && stats.unplannedOffMinutes > 0 && <> (поза графіком {formatMinutes(stats.unplannedOffMinutes)})</>}</span>
           {stats.offMinutes > 0 && <span title="Скільки EcoFlow живив розетки без мережі і скільки віддав">EcoFlow <b className="text-foreground">{formatMinutes(stats.ecoflowMinutes)}</b> · <b className="text-foreground">{kwh(stats.ecoflowWh)}</b> кВт·год</span>}
         </>}
     </div>
@@ -92,8 +92,11 @@ function Tile({ icon: Icon, label, value, note, className }: { icon: typeof Sun;
   </div>
 }
 
-/** Light / no-light timeline per day, compared with the outage schedule (svitlobot style). */
-export function PowerTimeline({ refreshKey }: { refreshKey?: unknown }) {
+/**
+ * Light / no-light timeline per day, compared with the outage schedule (svitlobot style).
+ * Without a schedule (grid-only mode) only the actual grid strip and its totals are shown.
+ */
+export function PowerTimeline({ refreshKey, withSchedule = true }: { refreshKey?: unknown; withSchedule?: boolean }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>(7)
   const [days, setDays] = useState<PowerDay[]>([])
   const [loading, setLoading] = useState(true)
@@ -112,18 +115,19 @@ export function PowerTimeline({ refreshKey }: { refreshKey?: unknown }) {
   }, [range, refreshKey])
 
   const totals = useMemo(() => days.filter(day => !day.future).reduce((sum, day) => ({
+    on: sum.on + day.stats.onMinutes,
     extraOn: sum.extraOn + day.stats.extraOnMinutes,
     off: sum.off + day.stats.offMinutes,
     unplanned: sum.unplanned + day.stats.unplannedOffMinutes,
     scheduled: sum.scheduled + day.stats.scheduledOffMinutes,
     ecoflowMinutes: sum.ecoflowMinutes + day.stats.ecoflowMinutes,
     ecoflowWh: sum.ecoflowWh + day.stats.ecoflowWh,
-  }), { extraOn: 0, off: 0, unplanned: 0, scheduled: 0, ecoflowMinutes: 0, ecoflowWh: 0 }), [days])
+  }), { on: 0, extraOn: 0, off: 0, unplanned: 0, scheduled: 0, ecoflowMinutes: 0, ecoflowWh: 0 }), [days])
   const pastDays = days.filter(day => !day.future).length || 1
 
   return <section className="rounded-sm border bg-card p-4 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-energy-blue" /><h2 className="text-xs font-semibold uppercase tracking-wider">Світло: факт і графік</h2></div>
+      <div className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-energy-blue" /><h2 className="text-xs font-semibold uppercase tracking-wider">{withSchedule ? 'Світло: факт і графік' : 'Світло: факт'}</h2></div>
       <div className="flex rounded-sm border overflow-hidden" role="group" aria-label="Період">
         {RANGES.map(value => <button key={value} onClick={() => setRange(value)}
           className={cn('h-7 px-2.5 text-[10px] font-mono', range === value ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>{value} дн</button>)}
@@ -131,10 +135,14 @@ export function PowerTimeline({ refreshKey }: { refreshKey?: unknown }) {
     </div>
 
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-      <Tile icon={Sun} className="text-energy-green" label="Додатково зі світлом" value={`${formatMinutes(totals.extraOn)} год`}
-        note={`≈ ${formatMinutes(totals.extraOn / pastDays)} год/день понад графік`} />
+      {withSchedule
+        ? <Tile icon={Sun} className="text-energy-green" label="Додатково зі світлом" value={`${formatMinutes(totals.extraOn)} год`}
+          note={`≈ ${formatMinutes(totals.extraOn / pastDays)} год/день понад графік`} />
+        : <Tile icon={Sun} className="text-energy-green" label="Зі світлом" value={`${formatMinutes(totals.on)} год`}
+          note={`≈ ${formatMinutes(totals.on / pastDays)} год/день`} />}
       <Tile icon={Plug} className="text-energy-red" label="Без світла" value={`${formatMinutes(totals.off)} год`}
-        note={totals.unplanned > 0 ? `з них поза графіком ${formatMinutes(totals.unplanned)}` : 'усе в межах графіка'} />
+        note={!withSchedule ? `≈ ${formatMinutes(totals.off / pastDays)} год/день`
+          : totals.unplanned > 0 ? `з них поза графіком ${formatMinutes(totals.unplanned)}` : 'усе в межах графіка'} />
       <Tile icon={PlugZap} className="text-energy-yellow" label="EcoFlow працював" value={`${formatMinutes(totals.ecoflowMinutes)} год`}
         note="живив розетки без мережі" />
       <Tile icon={BatteryCharging} className="text-energy-blue" label="Віддано з батареї" value={`${kwh(totals.ecoflowWh)} кВт·год`}
@@ -145,7 +153,7 @@ export function PowerTimeline({ refreshKey }: { refreshKey?: unknown }) {
       <span className="flex items-center gap-1.5"><span className="w-3 h-2.5 rounded-sm bg-energy-green" />світло є</span>
       <span className="flex items-center gap-1.5"><span className="w-3 h-2.5 rounded-sm bg-energy-red" />світла немає</span>
       <span className="flex items-center gap-1.5"><span className="w-3 h-2.5 rounded-sm bg-muted-foreground/25" />немає даних</span>
-      <span className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded-sm" style={{ background: scheduledStripes }} />за графіком без світла</span>
+      {withSchedule && <span className="flex items-center gap-1.5"><span className="w-3 h-1.5 rounded-sm" style={{ background: scheduledStripes }} />за графіком без світла</span>}
     </div>
 
     <div className="min-h-[16px] text-[10px] font-mono" aria-live="polite">{hover ? <><span className="text-muted-foreground">{hover.day} · </span>{hover.text}</> : <span className="text-muted-foreground">Наведіть на смугу, щоб побачити час</span>}</div>
@@ -160,8 +168,8 @@ export function PowerTimeline({ refreshKey }: { refreshKey?: unknown }) {
                 {HOUR_TICKS.map(hour => <span key={hour} className={cn('absolute', hour === 0 ? '' : hour === 24 ? '-translate-x-full' : '-translate-x-1/2')} style={{ left: `${(hour / 24) * 100}%` }}>{String(hour).padStart(2, '0')}</span>)}
               </div>
             </div>
-            {days.map(day => <DayRow key={day.day} day={day} onHover={setHover} />)}
+            {days.map(day => <DayRow key={day.day} day={day} withSchedule={withSchedule} onHover={setHover} />)}
           </div>}
-    <p className="text-[10px] text-muted-foreground">Факт визначається за напругою на вході EcoFlow (оновлення кожні 10 с). Верхня смуга — графік YASNO на той день (плановий, або імовірний, якщо планового не було). «Зі світлом понад графік» — хвилини, коли за графіком світла мало не бути, а воно було.</p>
+    <p className="text-[10px] text-muted-foreground">Факт визначається за напругою на вході EcoFlow (оновлення кожні 10 с).{withSchedule && ' Верхня смуга — графік YASNO на той день (плановий, або імовірний, якщо планового не було). «Зі світлом понад графік» — хвилини, коли за графіком світла мало не бути, а воно було.'}</p>
   </section>
 }

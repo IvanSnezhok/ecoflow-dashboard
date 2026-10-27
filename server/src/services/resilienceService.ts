@@ -41,6 +41,7 @@ import type {
   LoadPeriod,
   OutageEvent,
   PowerDay,
+  ResilienceMode,
   ResilienceSettings,
   ResilienceStatus,
   ScheduleSource,
@@ -72,6 +73,7 @@ function rowToSettings(row?: ResilienceSettingsRow): ResilienceSettings {
   return {
     deviceId: row?.device_id ?? undefined,
     enabled: row?.enabled === 1,
+    mode: row?.mode === 'grid' ? 'grid' : 'hybrid',
     autoAc: row?.auto_ac === 1,
     notifySlack: (row?.notify_slack ?? 1) === 1,
     regionId: row?.region_id ?? undefined,
@@ -265,10 +267,20 @@ export async function resolveResilienceGroup(regionId: number, dsoId: number, st
 export function getSettings(): ResilienceSettings { return rowToSettings(getResilienceSettings()) }
 export async function forceRefresh(): Promise<ResilienceStatus> {
   const settings = getSettings(); lastScheduleFetch = 0
-  await refreshSchedule(settings, true)
-  return cachedStatus
+  if (settings.mode !== 'grid') await refreshSchedule(settings, true)
+  return getStatus()
 }
-export function getStatus(): ResilienceStatus { return cachedStatus }
+export function getStatus(): ResilienceStatus { return { ...cachedStatus, mode: getSettings().mode } }
+
+/** The grid-only mode keeps no schedule, so nothing from YASNO drives AC or alerts. */
+function clearSchedule(): void {
+  cachedStatus = {
+    ...cachedStatus, risk: 'none', events: [], currentEvent: undefined, nextEvent: undefined,
+    scheduleStatus: undefined, scheduleUpdatedAt: undefined, checkedAt: undefined, error: undefined,
+  }
+  // Switching back to the hybrid mode fetches the schedule on the next run
+  lastScheduleFetch = 0
+}
 
 function historicalProfile(deviceId: number, nowMs: number): HistoricalProfile {
   if (historyCache?.deviceId === deviceId && nowMs - historyCache.at < HISTORY_TTL_MS) return historyCache.profile
@@ -333,13 +345,14 @@ function finishedOutage(result: GridObserveResult): FinishedOutage | undefined {
   }
 }
 
-function currentGridStatus(): GridStatus {
+function currentGridStatus(mode: ResilienceMode): GridStatus {
   const state = gridTracker.state
   const scheduledOutage = Boolean(cachedStatus.currentEvent) || cachedStatus.risk === 'emergency'
   return {
     state,
     since: gridTracker.sinceMs ? new Date(gridTracker.sinceMs).toISOString() : undefined,
-    unplanned: state === 'off' && !scheduledOutage,
+    // Without a schedule there is nothing for an outage to be outside of
+    unplanned: mode === 'hybrid' && state === 'off' && !scheduledOutage,
     ...(state === 'off' ? {
       outageWh: Math.round(gridTracker.episodeWh),
       outageEcoflowMinutes: Math.round(gridTracker.episodeEcoflowSeconds / 60),
@@ -366,11 +379,15 @@ export async function processResilienceAutomation(
   // even while the automation itself is switched off.
   const grid = observeGrid(metrics.deviceId, rawData, metrics.totalOutputWatts, now.getTime())
   if (!settings.enabled) return
-  await refreshSchedule(settings)
-  cachedStatus = { ...cachedStatus, ...assess(cachedStatus.events, cachedStatus.scheduleStatus, now, settings.warningLeadMinutes) }
-  // assess() never yields 'stale', so re-apply it here or AC automation would keep acting on old data.
-  if (isScheduleStale()) cachedStatus.risk = 'stale'
-  cachedStatus.grid = currentGridStatus()
+  if (settings.mode === 'grid') {
+    clearSchedule()
+  } else {
+    await refreshSchedule(settings)
+    cachedStatus = { ...cachedStatus, ...assess(cachedStatus.events, cachedStatus.scheduleStatus, now, settings.warningLeadMinutes) }
+    // assess() never yields 'stale', so re-apply it here or AC automation would keep acting on old data.
+    if (isScheduleStale()) cachedStatus.risk = 'stale'
+  }
+  cachedStatus.grid = currentGridStatus(settings.mode)
 
   // rawData comes from ecoflowApi.getDeviceQuota, which keeps packs a single answer omits
   const extraSocs = connectedExtraBatterySocs(rawData)
@@ -468,7 +485,7 @@ async function switchAc(
 async function sendAlerts(soc: number, settings: ResilienceSettings, acOutputWatts: number, outage?: FinishedOutage): Promise<void> {
   const { alerts, state } = detectAlerts(alertState, {
     risk: cachedStatus.risk, currentEvent: cachedStatus.currentEvent, nextEvent: cachedStatus.nextEvent,
-    forecast: cachedStatus.forecast, acAction: cachedStatus.acAction ?? 'none', soc, minSoc: settings.minSoc,
+    forecast: cachedStatus.forecast, acAction: cachedStatus.acAction ?? 'none', soc, minSoc: settings.minSoc, mode: settings.mode,
     grid: cachedStatus.grid, finishedOutage: outage, acOutputWatts, acOffMaxWatts: settings.acOffMaxWatts,
   })
   alertState = state
@@ -504,7 +521,7 @@ export function getPowerTimeline(days: number, now = new Date()): PowerDay[] {
   const today = kyivDateKey(now)
   const firstDay = addDays(today, -(days - 1))
   const tomorrow = addDays(today, 1)
-  const schedule = settings.outageGroup ? getOutageScheduleDays(settings.outageGroup, firstDay, tomorrow) : []
+  const schedule = settings.outageGroup && settings.mode === 'hybrid' ? getOutageScheduleDays(settings.outageGroup, firstDay, tomorrow) : []
   const rangeStart = kyivDateAtMinutes(firstDay, 0)
   if (!rangeStart) return []
   const minutes = getGridMinutes(settings.deviceId, Math.floor(rangeStart.getTime() / 60_000), Math.ceil(now.getTime() / 60_000) + 1)
