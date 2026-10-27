@@ -1,6 +1,8 @@
 export interface LoadPeriod { start: string; end: string; watts: number; label?: string }
+/** hybrid: YASNO schedule + the device's grid reading; grid: the grid reading alone, no YASNO address. */
+export type ResilienceMode = 'hybrid' | 'grid'
 export interface ResilienceSettings {
-  deviceId?: number; enabled: boolean; autoAc: boolean; notifySlack: boolean; regionId?: number; dsoId?: number; outageGroup?: string
+  deviceId?: number; enabled: boolean; mode: ResilienceMode; autoAc: boolean; notifySlack: boolean; regionId?: number; dsoId?: number; outageGroup?: string
   warningLeadMinutes: number; recoveryDelayMinutes: number; minSoc: number; reserveSoc: number
   batteryCapacityWh: number; inverterEfficiency: number; acOffMaxWatts: number; loadProfile: LoadPeriod[]; updatedAt?: string
 }
@@ -15,7 +17,7 @@ export interface GridStatus { state: GridState; since?: string; unplanned: boole
 export interface LoadProfileStatus { slotMinutes: number; slots: Array<number | null>; days: number }
 export type AcAction = 'on' | 'off' | 'waiting-load' | 'blocked-low-soc' | 'failed' | 'none'
 export interface ResilienceStatus {
-  risk: 'none' | 'watch' | 'imminent' | 'active' | 'emergency' | 'stale'; currentEvent?: OutageEvent; nextEvent?: OutageEvent
+  mode?: ResilienceMode; risk: 'none' | 'watch' | 'imminent' | 'active' | 'emergency' | 'stale'; currentEvent?: OutageEvent; nextEvent?: OutageEvent
   scheduleStatus?: string; scheduleUpdatedAt?: string; checkedAt?: string; error?: string
   acAction?: AcAction; forecast?: RuntimeForecast; grid?: GridStatus; loadHistory?: LoadProfileStatus; events: OutageEvent[]
 }

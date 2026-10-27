@@ -41,7 +41,7 @@ initDatabase()
 db.prepare("INSERT INTO devices (serial_number, device_type, name) VALUES (?, 'DELTA Pro', 'Delta')").run(SN)
 const deviceId = (db.prepare('SELECT id FROM devices WHERE serial_number = ?').get(SN) as { id: number }).id
 upsertResilienceSettings({
-  device_id: deviceId, enabled: 1, auto_ac: 1, notify_slack: 0, region_id: 25, dso_id: 902, outage_group: GROUP,
+  device_id: deviceId, enabled: 1, mode: 'hybrid', auto_ac: 1, notify_slack: 0, region_id: 25, dso_id: 902, outage_group: GROUP,
   warning_lead_minutes: 60, recovery_delay_minutes: 0, min_soc: 25, reserve_soc: 15,
   battery_capacity_wh: 3600, inverter_efficiency: 0.85, load_profile: '[]', ac_off_max_watts: 50,
 })

@@ -5,10 +5,10 @@ import { useDeviceStore } from '@/stores/deviceStore'
 import { usePanelAccess } from '@/hooks/usePanelAccess'
 import { cn } from '@/lib/utils'
 import { formatMinutes, PowerTimeline } from '@/components/resilience/PowerTimeline'
-import type { AcAction, LoadPeriod, LoadSource, ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
+import type { AcAction, GridState, LoadPeriod, LoadSource, ResilienceMode, ResilienceSettings, ResilienceStatus, YasnoAddressOption, YasnoRegion } from '@/types/resilience'
 
 const defaults: ResilienceSettings = {
-  enabled: false, autoAc: false, notifySlack: true, warningLeadMinutes: 60, recoveryDelayMinutes: 15,
+  enabled: false, mode: 'hybrid', autoAc: false, notifySlack: true, warningLeadMinutes: 60, recoveryDelayMinutes: 15,
   minSoc: 25, reserveSoc: 15, batteryCapacityWh: 3600, inverterEfficiency: 0.85, acOffMaxWatts: 50,
   loadProfile: [
     { start: '00:00', end: '07:00', watts: 180, label: 'Ніч' },
@@ -26,6 +26,18 @@ const riskCopy: Record<ResilienceStatus['risk'], { label: string; color: string;
   active: { label: 'ВІДКЛЮЧЕННЯ', color: 'text-energy-red border-energy-red/40 bg-energy-red/5', note: 'Планове вікно активне' },
   emergency: { label: 'АВАРІЙНИЙ СТАН', color: 'text-energy-red border-energy-red/50 bg-energy-red/10', note: 'YASNO повідомляє про аварійні відключення' },
   stale: { label: 'ДАНІ ЗАСТАРІЛИ', color: 'text-muted-foreground border-border bg-muted/30', note: 'Автокерування призупинено до оновлення даних' },
+}
+
+// Grid-only mode: the banner shows what the device sees on its AC input.
+const gridCopy: Record<GridState, { label: string; color: string; note: string }> = {
+  on: { label: 'МЕРЕЖА Є', color: riskCopy.none.color, note: 'EcoFlow бачить напругу на вході' },
+  off: { label: 'СВІТЛА НЕМАЄ', color: riskCopy.active.color, note: 'EcoFlow не бачить мережі на вході' },
+  unknown: { label: 'СТАН МЕРЕЖІ НЕВІДОМИЙ', color: riskCopy.stale.color, note: 'EcoFlow ще не передав напругу на вході; без неї відключення не видно' },
+}
+
+const modeCopy: Record<ResilienceMode, { label: string; note: string }> = {
+  hybrid: { label: 'Гібридний: графік YASNO + факт', note: 'AC вмикається перед вікном за графіком YASNO, при аварійному статусі і щойно EcoFlow бачить, що мережа зникла. Потрібна група відключень YASNO.' },
+  grid: { label: 'Без YASNO: лише факт', note: 'Графік і адреса не потрібні. AC вмикається, щойно EcoFlow бачить, що напруги на вході немає: приблизно через 20–30 с після відключення.' },
 }
 
 const acActionCopy: Record<AcAction, { label: string; color: string }> = {
@@ -143,10 +155,14 @@ export default function Resilience() {
   }, [])
 
   const selectedRegion = useMemo(() => regions.find(region => region.id === settings.regionId), [regions, settings.regionId])
+  // The banner, windows and timeline follow the saved mode; the form follows the edited one.
+  const gridOnly = status.mode === 'grid'
+  const formGridOnly = settings.mode === 'grid'
   // The device seeing no grid outranks a schedule that says everything is fine.
-  const risk = status.grid?.state === 'off' && status.grid.unplanned
-    ? { label: 'ПОЗАПЛАНОВЕ ВІДКЛЮЧЕННЯ', color: riskCopy.emergency.color, note: 'EcoFlow не бачить мережі, хоча за графіком світло мало бути' }
-    : riskCopy[status.risk]
+  const risk = gridOnly ? gridCopy[status.grid?.state ?? 'unknown']
+    : status.grid?.state === 'off' && status.grid.unplanned
+      ? { label: 'ПОЗАПЛАНОВЕ ВІДКЛЮЧЕННЯ', color: riskCopy.emergency.color, note: 'EcoFlow не бачить мережі, хоча за графіком світло мало бути' }
+      : riskCopy[status.risk]
   const nextEvents = status.events.filter(event => new Date(event.end) > new Date()).slice(0, 6)
 
   const patch = <K extends keyof ResilienceSettings>(key: K, value: ResilienceSettings[K]) => setSettings(current => ({ ...current, [key]: value }))
@@ -173,7 +189,11 @@ export default function Resilience() {
 
   const save = async () => {
     setSaving(true); setMessage(null)
-    try { const res = await api.updateResilienceSettings(settings); setSettings(res.data.data); setMessage('Налаштування збережено') }
+    try {
+      const res = await api.updateResilienceSettings(settings); setSettings(res.data.data); setMessage('Налаштування збережено')
+      // The status carries the saved mode, so the banner and timeline switch with it
+      api.getResilienceStatus().then(statusRes => setStatus(statusRes.data.data)).catch(() => undefined)
+    }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Помилка збереження') }
     finally { setSaving(false) }
   }
@@ -188,7 +208,7 @@ export default function Resilience() {
 
   return <div className="space-y-5">
     <div className="flex items-start justify-between gap-4">
-      <div><h1 className="text-lg font-semibold tracking-tight">Резерв живлення</h1><p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Київ · YASNO · DELTA Pro</p></div>
+      <div><h1 className="text-lg font-semibold tracking-tight">Резерв живлення</h1><p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{gridOnly ? 'Факт мережі · DELTA Pro' : 'Київ · YASNO · DELTA Pro'}</p></div>
       {readOnly ? <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Лише перегляд</span> : <div className="flex gap-2">
         <button onClick={refresh} disabled={refreshing} className="h-9 px-3 rounded-sm border text-xs font-mono flex items-center gap-2 hover:bg-muted"><RefreshCw className={cn('w-3.5 h-3.5', refreshing && 'animate-spin')} />Оновити</button>
         <button onClick={save} disabled={saving} className="h-9 px-3 rounded-sm bg-primary text-primary-foreground text-xs font-mono flex items-center gap-2"><Save className="w-3.5 h-3.5" />{saving ? 'Збереження…' : 'Зберегти'}</button>
@@ -200,7 +220,7 @@ export default function Resilience() {
     <section className={cn('rounded-sm border p-5 relative overflow-hidden', risk.color)}>
       <div className="absolute right-0 top-0 text-[96px] leading-none font-black opacity-[0.04] select-none">50Hz</div>
       <div className="flex items-start justify-between gap-6 relative">
-        <div><div className="flex items-center gap-2"><Zap className="w-5 h-5" /><span className="text-sm font-black tracking-[0.16em]">{risk.label}</span></div><p className="mt-2 text-xs text-foreground">{risk.note}</p><p className="mt-1 text-[10px] font-mono text-muted-foreground">Перевірено: {fmt(status.checkedAt)} {status.error ? `· ${status.error}` : ''}</p></div>
+        <div><div className="flex items-center gap-2"><Zap className="w-5 h-5" /><span className="text-sm font-black tracking-[0.16em]">{risk.label}</span></div><p className="mt-2 text-xs text-foreground">{risk.note}</p><p className="mt-1 text-[10px] font-mono text-muted-foreground">{gridOnly ? 'Графік YASNO не використовується' : `Перевірено: ${fmt(status.checkedAt)} ${status.error ? `· ${status.error}` : ''}`}</p></div>
         <div className="flex gap-6 text-right">
           {status.grid && status.grid.state !== 'unknown' && <div>
             <div className="text-[10px] font-mono uppercase text-muted-foreground">Мережа зараз</div>
@@ -217,8 +237,14 @@ export default function Resilience() {
       <section className="lg:col-span-2 rounded-sm border bg-card p-4 space-y-4">
         <div className="flex items-center justify-between"><div className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-primary" /><h2 className="text-xs font-semibold uppercase tracking-wider">Автокерування AC</h2></div>
           <button onClick={() => patch('enabled', !settings.enabled)} className={cn('w-11 h-6 rounded-full p-0.5 transition-colors', settings.enabled ? 'bg-energy-green' : 'bg-muted')}><span className={cn('block w-5 h-5 rounded-full bg-white transition-transform', settings.enabled && 'translate-x-5')} /></button></div>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <Field label="EcoFlow"><select className={inputClass} value={settings.deviceId ?? ''} onChange={e => patch('deviceId', Number(e.target.value) || undefined)}><option value="">Оберіть пристрій</option>{devices.filter(d => d.capabilities?.acOutput).map(device => <option key={device.serialNumber} value={device.id}>{device.name}</option>)}</select></Field>
+        <div className="space-y-1.5">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="EcoFlow"><select className={inputClass} value={settings.deviceId ?? ''} onChange={e => patch('deviceId', Number(e.target.value) || undefined)}><option value="">Оберіть пристрій</option>{devices.filter(d => d.capabilities?.acOutput).map(device => <option key={device.serialNumber} value={device.id}>{device.name}</option>)}</select></Field>
+            <Field label="Режим"><select className={inputClass} value={settings.mode} onChange={e => patch('mode', e.target.value as ResilienceMode)}>{(Object.keys(modeCopy) as ResilienceMode[]).map(mode => <option key={mode} value={mode}>{modeCopy[mode].label}</option>)}</select></Field>
+          </div>
+          <p className="text-[10px] text-muted-foreground">{modeCopy[settings.mode].note}</p>
+        </div>
+        {!formGridOnly && <><div className="grid sm:grid-cols-[1fr_1.5fr_0.75fr] gap-3">
           <Field label="Регіон"><select className={inputClass} value={settings.regionId ?? ''} onChange={e => { const id = Number(e.target.value) || undefined; patch('regionId', id); patch('dsoId', undefined); patch('outageGroup', undefined); resetAddress() }}><option value="">Оберіть регіон</option>{regions.map(region => <option key={region.id} value={region.id}>{region.name ?? region.value}</option>)}</select></Field>
           <Field label="Оператор мережі"><select className={inputClass} value={settings.dsoId ?? ''} onChange={e => { patch('dsoId', Number(e.target.value) || undefined); patch('outageGroup', undefined); resetAddress() }} disabled={!selectedRegion}><option value="">Оберіть оператора</option>{selectedRegion?.dsos?.map(dso => <option key={dso.id} value={dso.id}>{dso.name}</option>)}</select></Field>
           <Field label="Група відключень"><select className={inputClass} value={settings.outageGroup ?? ''} onChange={e => patch('outageGroup', e.target.value || undefined)}><option value="">Оберіть групу</option>{groups.map(group => <option key={group}>{group}</option>)}</select></Field>
@@ -239,17 +265,21 @@ export default function Resilience() {
             </div>
           </div>
           {addressHint && <div className={cn('mt-2 flex items-center gap-1.5 text-[10px] font-mono', houseId && settings.outageGroup ? 'text-energy-green' : 'text-muted-foreground')}>{houseId && settings.outageGroup && <CheckCircle2 className="w-3.5 h-3.5" />}{addressHint}</div>}
-        </div>
-        <div className="grid sm:grid-cols-5 gap-3">
-          <Field label="Попередження, хв"><input className={inputClass} type="number" value={settings.warningLeadMinutes} onChange={e => patch('warningLeadMinutes', Number(e.target.value))} /></Field>
+        </div></>}
+        <div className={cn('grid gap-3', formGridOnly ? 'sm:grid-cols-4' : 'sm:grid-cols-5')}>
+          {!formGridOnly && <Field label="Попередження, хв"><input className={inputClass} type="number" value={settings.warningLeadMinutes} onChange={e => patch('warningLeadMinutes', Number(e.target.value))} /></Field>}
           <Field label="Затримка вимк., хв"><input className={inputClass} type="number" value={settings.recoveryDelayMinutes} onChange={e => patch('recoveryDelayMinutes', Number(e.target.value))} /></Field>
           <Field label="Мін. SOC, %"><input className={inputClass} type="number" value={settings.minSoc} onChange={e => patch('minSoc', Number(e.target.value))} /></Field>
           <Field label="Резерв SOC, %"><input className={inputClass} type="number" value={settings.reserveSoc} onChange={e => patch('reserveSoc', Number(e.target.value))} /></Field>
           <Field label="Вимк. AC нижче, Вт"><input className={inputClass} type="number" value={settings.acOffMaxWatts} onChange={e => patch('acOffMaxWatts', Number(e.target.value))} /></Field>
         </div>
         {status.acAction && <div className="text-[10px] font-mono text-muted-foreground">Останнє рішення автоматики: <span className={acActionCopy[status.acAction].color}>{acActionCopy[status.acAction].label}</span></div>}
-        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.autoAc} onChange={e => patch('autoAc', e.target.checked)} /><span><span className="block text-xs font-medium">Дозволити автоматичне перемикання AC</span><span className="block mt-1 text-[10px] text-muted-foreground">AC вмикається перед плановим/імовірним вікном, при аварійному статусі YASNO і завжди, коли EcoFlow бачить, що мережа зникла (навіть поза графіком). Вимикається лише якщо його ввімкнула ця автоматизація, і лише коли навантаження на розетках EcoFlow щонайменше 2 хв нижче порогу.</span></span></label>
-        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.notifySlack} onChange={e => patch('notifySlack', e.target.checked)} /><span><span className="block text-xs font-medium">Сповіщення у Slack</span><span className="block mt-1 text-[10px] text-muted-foreground">Попередження перед вікном, початок і кінець відключення, фактичне зникнення і повернення світла (з підсумком роботи EcoFlow), позапланові відключення, перемикання AC, низький заряд і застарілий графік. Потрібен увімкнений Slack у налаштуваннях автоматизацій.</span></span></label>
+        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.autoAc} onChange={e => patch('autoAc', e.target.checked)} /><span><span className="block text-xs font-medium">Дозволити автоматичне перемикання AC</span><span className="block mt-1 text-[10px] text-muted-foreground">{formGridOnly
+          ? 'AC вмикається, щойно EcoFlow бачить, що мережа зникла. Вимикається лише якщо його ввімкнула ця автоматизація: після затримки від повернення світла і коли навантаження на розетках EcoFlow щонайменше 2 хв нижче порогу.'
+          : 'AC вмикається перед плановим/імовірним вікном, при аварійному статусі YASNO і завжди, коли EcoFlow бачить, що мережа зникла (навіть поза графіком). Вимикається лише якщо його ввімкнула ця автоматизація, і лише коли навантаження на розетках EcoFlow щонайменше 2 хв нижче порогу.'}</span></span></label>
+        <label className="flex items-start gap-3 rounded-sm border bg-muted/20 p-3 cursor-pointer"><input type="checkbox" className="mt-0.5" checked={settings.notifySlack} onChange={e => patch('notifySlack', e.target.checked)} /><span><span className="block text-xs font-medium">Сповіщення у Slack</span><span className="block mt-1 text-[10px] text-muted-foreground">{formGridOnly
+          ? 'Фактичне зникнення і повернення світла (з підсумком роботи EcoFlow), перемикання AC і низький заряд.'
+          : 'Попередження перед вікном, початок і кінець відключення, фактичне зникнення і повернення світла (з підсумком роботи EcoFlow), позапланові відключення, перемикання AC, низький заряд і застарілий графік.'} Потрібен увімкнений Slack у налаштуваннях автоматизацій.</span></span></label>
       </section>
 
       <section className="rounded-sm border bg-card p-4 space-y-4"><div className="flex items-center gap-2"><Gauge className="w-4 h-4 text-energy-blue" /><h2 className="text-xs font-semibold uppercase tracking-wider">Прогноз автономності</h2></div>
@@ -260,15 +290,17 @@ export default function Resilience() {
       </section>
     </fieldset>
 
-    <PowerTimeline refreshKey={status.checkedAt} />
+    <PowerTimeline refreshKey={`${status.mode}:${status.checkedAt}`} withSchedule={!gridOnly} />
 
     <fieldset disabled={readOnly} className="grid lg:grid-cols-5 gap-4 min-w-0">
-      <section className="lg:col-span-3 rounded-sm border bg-card p-4"><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><BatteryCharging className="w-4 h-4 text-energy-green" /><div><h2 className="text-xs font-semibold uppercase tracking-wider">Резервний профіль споживання</h2><p className="text-[10px] text-muted-foreground">Прогноз бере навантаження з історії EcoFlow за 14 днів; ці вікна використовуються лише там, де історії ще немає.</p></div></div><button onClick={() => patch('loadProfile', [...settings.loadProfile, { start: '12:00', end: '13:00', watts: 300, label: 'Нове вікно' }])} className="text-[10px] font-mono flex items-center gap-1"><Plus className="w-3 h-3" />Додати</button></div>
+      <section className={cn('rounded-sm border bg-card p-4', gridOnly ? 'lg:col-span-5' : 'lg:col-span-3')}><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><BatteryCharging className="w-4 h-4 text-energy-green" /><div><h2 className="text-xs font-semibold uppercase tracking-wider">Резервний профіль споживання</h2><p className="text-[10px] text-muted-foreground">Прогноз бере навантаження з історії EcoFlow за 14 днів; ці вікна використовуються лише там, де історії ще немає.</p></div></div><button onClick={() => patch('loadProfile', [...settings.loadProfile, { start: '12:00', end: '13:00', watts: 300, label: 'Нове вікно' }])} className="text-[10px] font-mono flex items-center gap-1"><Plus className="w-3 h-3" />Додати</button></div>
         <div className="space-y-2">{settings.loadProfile.map((period, index) => <div key={index} className="grid grid-cols-[1fr_92px_92px_90px_28px] gap-2 items-center"><input className={inputClass} value={period.label ?? ''} onChange={e => updateLoad(index, { label: e.target.value })} placeholder="Назва" /><input className={inputClass} type="time" value={period.start} onChange={e => updateLoad(index, { start: e.target.value })} /><input className={inputClass} type="time" value={period.end} onChange={e => updateLoad(index, { end: e.target.value })} /><div className="relative"><input className={cn(inputClass, 'pr-7')} type="number" value={period.watts} onChange={e => updateLoad(index, { watts: Number(e.target.value) })} /><span className="absolute right-2 top-2.5 text-[10px] text-muted-foreground">W</span></div><button onClick={() => patch('loadProfile', settings.loadProfile.filter((_, i) => i !== index))}><Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-energy-red" /></button></div>)}</div>
       </section>
-      <section className="lg:col-span-2 rounded-sm border bg-card p-4"><div className="flex items-center gap-2 mb-3"><Clock3 className="w-4 h-4 text-energy-yellow" /><h2 className="text-xs font-semibold uppercase tracking-wider">Найближчі вікна</h2></div><div className="space-y-2">{nextEvents.length ? nextEvents.map((event, index) => <div key={`${event.start}-${index}`} className="flex items-center gap-3 rounded-sm border p-2.5"><div className={cn('w-1 h-8 rounded-full', event.type === 'definite' ? 'bg-energy-red' : 'bg-energy-yellow')} /><div className="flex-1"><div className="text-xs font-mono">{fmt(event.start)} — {fmt(event.end).split(' ')[1]}</div><div className="text-[10px] text-muted-foreground uppercase">{event.type === 'definite' ? 'планове' : 'імовірне'} · {event.source}</div></div></div>) : <div className="py-8 text-center text-xs text-muted-foreground">Запланованих вікон немає</div>}</div></section>
+      {!gridOnly && <section className="lg:col-span-2 rounded-sm border bg-card p-4"><div className="flex items-center gap-2 mb-3"><Clock3 className="w-4 h-4 text-energy-yellow" /><h2 className="text-xs font-semibold uppercase tracking-wider">Найближчі вікна</h2></div><div className="space-y-2">{nextEvents.length ? nextEvents.map((event, index) => <div key={`${event.start}-${index}`} className="flex items-center gap-3 rounded-sm border p-2.5"><div className={cn('w-1 h-8 rounded-full', event.type === 'definite' ? 'bg-energy-red' : 'bg-energy-yellow')} /><div className="flex-1"><div className="text-xs font-mono">{fmt(event.start)} — {fmt(event.end).split(' ')[1]}</div><div className="text-[10px] text-muted-foreground uppercase">{event.type === 'definite' ? 'планове' : 'імовірне'} · {event.source}</div></div></div>) : <div className="py-8 text-center text-xs text-muted-foreground">Запланованих вікон немає</div>}</div></section>}
     </fieldset>
 
-    <div className="flex gap-2 text-[10px] text-muted-foreground"><AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /><p>Графіки YASNO є орієнтовними та можуть змінюватися. При застарілих даних автоматичні команди блокуються; локальний мінімальний SOC має пріоритет над зовнішнім сигналом.</p></div>
+    <div className="flex gap-2 text-[10px] text-muted-foreground"><AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /><p>{gridOnly
+      ? 'Відключення визначається за напругою на вході EcoFlow, тож AC вмикається не миттєво. Щоб розетки не гасли взагалі, тримайте AC увімкненим: EcoFlow сам переходить на батарею. Мінімальний SOC має пріоритет над автоматикою.'
+      : 'Графіки YASNO є орієнтовними та можуть змінюватися. При застарілих даних автоматичні команди за графіком блокуються, а фактичне зникнення мережі все одно вмикає AC; локальний мінімальний SOC має пріоритет над зовнішнім сигналом.'}</p></div>
   </div>
 }

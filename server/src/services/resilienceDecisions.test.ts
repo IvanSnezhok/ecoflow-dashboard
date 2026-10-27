@@ -200,4 +200,31 @@ assert.deepEqual(run([
   { acAction: 'off' },
 ]), [[], [], ['ac-off-deferred'], [], ['ac-off']])
 
+// ---- Grid-only mode
+
+// Switching from the hybrid mode mid-outage (risk drops to 'none') or from a stale schedule stays quiet.
+assert.deepEqual(run([
+  { risk: 'active', currentEvent: outage },
+  { mode: 'grid' },
+  { risk: 'stale' },
+  { mode: 'grid' },
+]), [[], [], ['schedule-stale'], []])
+// Grid loss is announced without any reference to the schedule, then AC on and its switch-off.
+assert.deepEqual(run([
+  { mode: 'grid', grid: { state: 'on', unplanned: false } },
+  { mode: 'grid', grid: { state: 'off', unplanned: false } },
+  { mode: 'grid', grid: { state: 'off', unplanned: false }, acAction: 'on' },
+  { mode: 'grid', grid: { state: 'on', unplanned: false }, finishedOutage: { minutes: 30, ecoflowMinutes: 30, wh: 200 } },
+  { mode: 'grid', grid: { state: 'on', unplanned: false }, acAction: 'off' },
+]), [[], ['grid-lost'], ['ac-on'], ['grid-restored'], ['ac-off']])
+const gridLost = detectAlerts({ ...initialAlertState, risk: 'none', grid: 'on' }, { ...alertBase, mode: 'grid', grid: { state: 'off', unplanned: false } })
+assert.equal(gridLost.alerts[0].title, 'Світло зникло')
+assert.match(gridLost.alerts[0].message, /не бачить мережі/)
+const gridAcOn = detectAlerts({ ...initialAlertState, risk: 'none', grid: 'off' }, { ...alertBase, mode: 'grid', grid: { state: 'off', unplanned: false }, acAction: 'on' })
+assert.match(gridAcOn.alerts[0].message, /^Мережа зникла\./)
+const gridAcOff = detectAlerts({ ...initialAlertState, risk: 'none' }, { ...alertBase, mode: 'grid', acAction: 'off' })
+assert.match(gridAcOff.alerts[0].message, /^Світло повернулося/)
+// A forecast shorter than a window means nothing without a schedule.
+assert.deepEqual(run([{ mode: 'grid' }, { mode: 'grid', risk: 'imminent', nextEvent: outage, forecast: shortForecast }]), [[], []])
+
 console.log('Resilience decision fixtures passed')

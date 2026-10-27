@@ -1,6 +1,6 @@
 // Pure decision logic for the outage automation: when to switch AC and which
 // Slack alerts to raise. Kept free of DB/API imports so it can be tested alone.
-import type { GridState, OutageEvent, ResilienceStatus, RuntimeForecast } from '../types/resilience.js'
+import type { GridState, OutageEvent, ResilienceMode, ResilienceStatus, RuntimeForecast } from '../types/resilience.js'
 
 export type Risk = ResilienceStatus['risk']
 export type AcAction = NonNullable<ResilienceStatus['acAction']>
@@ -105,6 +105,8 @@ export interface AlertInput {
   acAction: AcAction
   soc: number
   minSoc: number
+  /** In 'grid' mode only the device's grid reading and AC switches are announced. */
+  mode?: ResilienceMode
   grid?: { state: GridState; unplanned: boolean }
   finishedOutage?: FinishedOutage
   acOutputWatts?: number
@@ -146,8 +148,11 @@ export function detectAlerts(prev: AlertState, input: AlertInput): { alerts: Res
   const alerts: ResilienceAlert[] = []
   const state: AlertState = { ...prev, risk: input.risk }
   const firstObservation = prev.risk === undefined
-  const changed = !firstObservation && prev.risk !== input.risk
+  // The grid-only mode keeps risk at 'none', so a switch from the hybrid mode must not read as an ending outage
+  const scheduled = input.mode !== 'grid'
+  const changed = scheduled && !firstObservation && prev.risk !== input.risk
   const soc = `SOC ${Math.round(input.soc)}%.`
+  const calm = scheduled ? 'Ризик відключення минув' : 'Світло повернулося'
 
   if (changed && input.risk === 'stale') {
     alerts.push({ kind: 'schedule-stale', color: 'warning', title: 'Графік YASNO недоступний',
@@ -157,7 +162,7 @@ export function detectAlerts(prev: AlertState, input: AlertInput): { alerts: Res
       message: 'Дані про відключення знову актуальні, автокерування відновлено.' })
   }
 
-  if (input.risk === 'imminent' && input.nextEvent && input.nextEvent.start !== prev.warnedEventStart) {
+  if (scheduled && input.risk === 'imminent' && input.nextEvent && input.nextEvent.start !== prev.warnedEventStart) {
     state.warnedEventStart = input.nextEvent.start
     alerts.push({ kind: 'outage-warning', color: 'warning', title: 'Наближається відключення',
       message: `Вікно ${windowText(input.nextEvent)}. ${soc}${runtimeText(input.forecast)}` })
@@ -179,11 +184,14 @@ export function detectAlerts(prev: AlertState, input: AlertInput): { alerts: Res
   if (grid && grid !== 'unknown') {
     state.grid = grid
     if (prev.grid === 'on' && grid === 'off') {
-      alerts.push(input.grid?.unplanned
-        ? { kind: 'grid-lost', color: 'danger', title: 'Позапланове відключення світла',
-          message: `Мережа зникла, хоча за графіком світло мало бути. AC EcoFlow має бути увімкнено. ${soc}${runtimeText(input.forecast)}` }
-        : { kind: 'grid-lost', color: 'warning', title: 'Світло зникло',
-          message: `Відключення за графіком. ${soc}${runtimeText(input.forecast)}` })
+      alerts.push(!scheduled
+        ? { kind: 'grid-lost', color: 'warning', title: 'Світло зникло',
+          message: `EcoFlow не бачить мережі на вході. ${soc}${runtimeText(input.forecast)}` }
+        : input.grid?.unplanned
+          ? { kind: 'grid-lost', color: 'danger', title: 'Позапланове відключення світла',
+            message: `Мережа зникла, хоча за графіком світло мало бути. AC EcoFlow має бути увімкнено. ${soc}${runtimeText(input.forecast)}` }
+          : { kind: 'grid-lost', color: 'warning', title: 'Світло зникло',
+            message: `Відключення за графіком. ${soc}${runtimeText(input.forecast)}` })
     } else if (prev.grid === 'off' && grid === 'on') {
       const outage = input.finishedOutage
       alerts.push({ kind: 'grid-restored', color: 'good', title: 'Світло повернулося',
@@ -194,9 +202,10 @@ export function detectAlerts(prev: AlertState, input: AlertInput): { alerts: Res
   }
 
   if (input.acAction === 'on') {
-    alerts.push({ kind: 'ac-on', color: 'good', title: 'AC увімкнено автоматично', message: `Підготовка до відключення. ${soc}` })
+    const reason = input.grid?.state === 'off' ? 'Мережа зникла.' : 'Підготовка до відключення.'
+    alerts.push({ kind: 'ac-on', color: 'good', title: 'AC увімкнено автоматично', message: `${reason} ${soc}` })
   } else if (input.acAction === 'off') {
-    alerts.push({ kind: 'ac-off', color: 'good', title: 'AC вимкнено автоматично', message: `Ризик відключення минув, навантаження зникло. ${soc}` })
+    alerts.push({ kind: 'ac-off', color: 'good', title: 'AC вимкнено автоматично', message: `${calm}, навантаження зникло. ${soc}` })
   } else if (input.acAction === 'failed') {
     alerts.push({ kind: 'ac-failed', color: 'danger', title: 'Не вдалося перемкнути AC',
       message: 'Команда EcoFlow не пройшла, автоматизація повторить спробу. Перевірте пристрій.' })
@@ -209,7 +218,7 @@ export function detectAlerts(prev: AlertState, input: AlertInput): { alerts: Res
     if (!prev.deferredNotified && loadWatts >= threshold) {
       state.deferredNotified = true
       alerts.push({ kind: 'ac-off-deferred', color: 'warning', title: 'AC залишено увімкненим',
-        message: `Ризик відключення минув, але з розеток EcoFlow ще йде ${Math.round(loadWatts)} Вт. AC вимкнеться, коли навантаження впаде нижче ${threshold} Вт.` })
+        message: `${calm}, але з розеток EcoFlow ще йде ${Math.round(loadWatts)} Вт. AC вимкнеться, коли навантаження впаде нижче ${threshold} Вт.` })
     }
   } else {
     state.deferredNotified = false
@@ -227,7 +236,7 @@ export function detectAlerts(prev: AlertState, input: AlertInput): { alerts: Res
 
   const outage = input.currentEvent ?? (input.risk === 'imminent' ? input.nextEvent : undefined)
   const depletion = input.forecast?.depletionAt
-  if (outage && depletion && new Date(depletion) < new Date(outage.end) && outage.start !== prev.lowReserveEventStart) {
+  if (scheduled && outage && depletion && new Date(depletion) < new Date(outage.end) && outage.start !== prev.lowReserveEventStart) {
     state.lowReserveEventStart = outage.start
     alerts.push({ kind: 'low-reserve', color: 'danger', title: 'Заряду може не вистачити',
       message: `За профілем споживання резерв закінчиться о ${formatKyivTime(depletion)}, а вікно триває до ${formatKyivTime(outage.end)}. ${soc}` })
