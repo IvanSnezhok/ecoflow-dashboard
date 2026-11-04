@@ -187,6 +187,8 @@ router.get("/", async (req: Request, res: Response) => {
                   ? ((q["pd.wattsInSum"] as number) || 0) - ((q["pd.wattsOutSum"] as number) || 0)
                   : ((q["bmsMaster.inputWatts"] as number) || 0) - ((q["bmsMaster.outputWatts"] as number) || 0),
               acInputWatts: (q["inv.inputWatts"] as number) || 0,
+              // A REST-refused device between snapshots has no AC power: unknown, not 0
+              acInputReported: "inv.inputWatts" in q,
               solarInputWatts:
                 (q["mppt.inWatts"] as number) ||
                 (((q["mppt.inAmp"] as number) || 0) *

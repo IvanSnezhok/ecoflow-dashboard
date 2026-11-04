@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {
-  appTopics, defaultAppRegion, isAppRegion, latestQuotasRequest, loginBody, maskEmail, parseAppTopic,
+  appTopics, defaultAppRegion, isAppRegion, LATEST_QUOTAS_REQUESTS, loginBody, maskEmail, parseAppTopic,
 } from "./appChannelProtocol.js";
 
 assert.equal(defaultAppRegion("https://api-e.ecoflow.com"), "api-e");
@@ -28,9 +28,12 @@ assert.equal(parseAppTopic(topics.get, "1234567890"), null, "our own requests ar
 assert.equal(parseAppTopic(topics.getReply, "999"), null, "another account's replies");
 assert.equal(parseAppTopic("/open/x/DAEBZ5KF0000000/quota", "1234567890"), null);
 
-assert.deepEqual(latestQuotasRequest(42), {
-  from: "HomeAssistant", id: "42", version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {},
-});
+// Both snapshot formats are reads that echo the id as a string
+assert.deepEqual(LATEST_QUOTAS_REQUESTS.map((request) => request.build(42)), [
+  { from: "HomeAssistant", id: "42", version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {} },
+  { from: "iOS", id: "42", version: "1.0", lang: "en-us", operateType: "latestQuotas", params: {} },
+]);
+assert.equal(new Set(LATEST_QUOTAS_REQUESTS.map((request) => request.variant)).size, LATEST_QUOTAS_REQUESTS.length);
 assert.equal(maskEmail("ivan@example.com"), "iv…@example.com");
 assert.equal(maskEmail("x"), "x…@");
 console.log("App channel protocol passed");

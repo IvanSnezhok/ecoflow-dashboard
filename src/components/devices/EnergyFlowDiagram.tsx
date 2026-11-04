@@ -4,7 +4,8 @@ import { POWER_STATUS, socTextColor, type PowerStatus } from '@/lib/deviceStatus
 
 interface EnergyFlowDiagramProps {
   solarInput: number
-  acInput: number
+  /** null: the device's data did not include it (a shared device read over MQTT) */
+  acInput: number | null
   acOutput: number
   batterySoc: number
   status: PowerStatus
@@ -54,16 +55,19 @@ function EnergyNode({
   unit,
   active,
   colorClass,
+  title,
 }: {
   icon: React.ReactNode
   label: string
-  value: number
+  /** null shows a dash: not reported, which is not the same as 0 */
+  value: number | null
   unit: string
   active: boolean
   colorClass: string
+  title?: string
 }) {
   return (
-    <div className="flex flex-col items-center gap-1 min-w-[52px] sm:min-w-[70px]">
+    <div className="flex flex-col items-center gap-1 min-w-[52px] sm:min-w-[70px]" title={title}>
       <div
         className={cn(
           'p-2 sm:p-2.5 rounded-lg transition-all duration-300',
@@ -79,8 +83,8 @@ function EnergyNode({
         'text-sm sm:text-base font-mono font-bold tabular-nums',
         active ? 'text-foreground' : 'text-muted-foreground'
       )}>
-        {value}
-        <span className="text-[10px] font-normal text-muted-foreground">{unit}</span>
+        {value ?? '—'}
+        {value !== null && <span className="text-[10px] font-normal text-muted-foreground">{unit}</span>}
       </span>
     </div>
   )
@@ -94,7 +98,8 @@ export function EnergyFlowDiagram({
   status,
   remaining,
 }: EnergyFlowDiagramProps) {
-  const totalInput = solarInput + acInput
+  const acInputWatts = acInput ?? 0
+  const totalInput = solarInput + acInputWatts
   const netPower = totalInput - acOutput
   const isCharging = status === 'charging'
   const isDischarging = status === 'discharging'
@@ -137,8 +142,9 @@ export function EnergyFlowDiagram({
             label="AC In"
             value={acInput}
             unit="W"
-            active={acInput > 0}
+            active={acInputWatts > 0}
             colorClass="bg-energy-purple/20 text-energy-purple"
+            title={acInput === null ? 'EcoFlow has not sent the AC input power in the last 2 minutes' : undefined}
           />
         </div>
 
@@ -150,7 +156,7 @@ export function EnergyFlowDiagram({
           </div>
           {/* AC Input line */}
           <div className="flex items-center h-[70px]">
-            <Flow active={acInput > 0} tone="purple" />
+            <Flow active={acInputWatts > 0} tone="purple" />
           </div>
         </div>
 

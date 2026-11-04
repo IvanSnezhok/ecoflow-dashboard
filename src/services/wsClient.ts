@@ -116,6 +116,7 @@ class WebSocketClient {
       dcOutputWatts: num('mppt.outWatts', 'dcOutWatts'),
       temperature: num('inv.outTemp', 'bmsMaster.temp', 'temp'),
     }
+    if (fields.acInputWatts !== undefined) fields.acInputReported = true
     const changed = Object.fromEntries(
       Object.entries(fields).filter(([, value]) => value !== undefined)
     ) as Partial<DeviceState>

@@ -195,7 +195,7 @@ export default function DeviceDetail() {
       {state && (
         <EnergyFlowDiagram
           solarInput={state.solarInputWatts}
-          acInput={state.acInputWatts}
+          acInput={state.acInputReported === false ? null : state.acInputWatts}
           acOutput={state.acOutputWatts}
           batterySoc={state.batterySoc}
           status={status}

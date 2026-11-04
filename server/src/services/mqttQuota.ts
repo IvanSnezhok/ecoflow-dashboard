@@ -29,6 +29,19 @@ const asFields = (value: unknown): Record<string, unknown> | null =>
     ? (value as Record<string, unknown>)
     : null;
 
+/** Some replies carry the quota map as a JSON string. */
+const parseIfString = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+/** The quota is usable once it carries the battery level. */
+export const hasBatteryLevel = (quota: Record<string, unknown>): boolean => "pd.soc" in quota || "bmsMaster.soc" in quota;
+
 /** The fields of one quota push, or null when it carries none. */
 export function quotaMessageFields(message: unknown): Record<string, unknown> | null {
   if (!message || typeof message !== "object") return null;
@@ -37,16 +50,45 @@ export function quotaMessageFields(message: unknown): Record<string, unknown> | 
 
 /**
  * The fields of a get_reply: the snapshot sits under data (app-style replies one level
- * deeper, data.quotaMap), params or param. A bare acknowledgement yields null.
+ * deeper, data.quotaMap, sometimes as a JSON string), params or param. A bare
+ * acknowledgement yields null, and so does a latestQuotas answer without a map (the
+ * cloud's { online: 0 } for a device it takes as offline): its wrapper is not a quota.
  */
 export function replyMessageFields(message: unknown): Record<string, unknown> | null {
   if (!message || typeof message !== "object") return null;
   const reply = message as Record<string, unknown>;
   for (const key of ["data", "params", "param"]) {
     const value = asFields(reply[key]);
-    if (value) return asFields(value.quotaMap) ?? value;
+    if (!value) continue;
+    // { online, sn, quotaMap }: only the map is quota ("online" is never a quota field)
+    return "quotaMap" in value || "online" in value ? asFields(parseIfString(value.quotaMap)) : value;
   }
   return null;
+}
+
+/** Fields reported recently, with when each was last reported. */
+export interface LiveFields {
+  values: Record<string, unknown>;
+  seenAt: Record<string, number>;
+}
+
+/**
+ * One quota from several live sets: for each field the most recent report wins, so an
+ * older snapshot never hides a fresher push of the same field.
+ */
+export function mergeLive(...sets: Array<LiveFields | null>): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  const seenAt: Record<string, number> = {};
+  for (const set of sets) {
+    if (!set) continue;
+    for (const [key, value] of Object.entries(set.values)) {
+      const at = set.seenAt[key] ?? 0;
+      if (key in seenAt && seenAt[key] > at) continue;
+      values[key] = value;
+      seenAt[key] = at;
+    }
+  }
+  return values;
 }
 
 export interface MqttSample {
@@ -63,6 +105,10 @@ export interface MqttQuotaDiagnostics {
   replies: number;
   /** get_reply messages that carried no quota, e.g. an error code */
   emptyReplies: number;
+  /** When the last get_reply with data arrived */
+  lastReplyAt: string | null;
+  /** Fields reported within MQTT_QUOTA_FRESH_MS, of fieldCount ever seen */
+  liveFieldCount: number;
   samples: MqttSample[];
 }
 
@@ -71,6 +117,7 @@ interface DeviceEntry {
   /** When each field was last reported */
   seenAt: Map<string, number>;
   updatedAt: number;
+  replyAt: number;
   pushes: number;
   replies: number;
   emptyReplies: number;
@@ -100,7 +147,7 @@ export class MqttQuotaStore {
   private entry(sn: string): DeviceEntry {
     let entry = this.devices.get(sn);
     if (!entry) {
-      entry = { values: {}, seenAt: new Map(), updatedAt: 0, pushes: 0, replies: 0, emptyReplies: 0, samples: new Map() };
+      entry = { values: {}, seenAt: new Map(), updatedAt: 0, replyAt: 0, pushes: 0, replies: 0, emptyReplies: 0, samples: new Map() };
       this.devices.set(sn, entry);
     }
     return entry;
@@ -131,6 +178,7 @@ export class MqttQuotaStore {
       return false;
     }
     entry.replies++;
+    entry.replyAt = now;
     this.merge(entry, fields, now);
     return true;
   }
@@ -146,15 +194,24 @@ export class MqttQuotaStore {
     samples.set(shape, { topic: `…/${kind}`, at: new Date(now).toISOString(), message });
   }
 
-  /** The fields reported recently, when they include the battery level, else null. */
-  fresh(sn: string, now = Date.now()): Record<string, unknown> | null {
+  /** The fields reported recently with their report times, or null when there are none. */
+  live(sn: string, now = Date.now()): LiveFields | null {
     const entry = this.devices.get(sn);
     if (!entry) return null;
-    const live: Record<string, unknown> = {};
+    const values: Record<string, unknown> = {};
+    const seenAt: Record<string, number> = {};
     for (const [key, at] of entry.seenAt) {
-      if (now - at <= MQTT_QUOTA_FRESH_MS) live[key] = entry.values[key];
+      if (now - at > MQTT_QUOTA_FRESH_MS) continue;
+      values[key] = entry.values[key];
+      seenAt[key] = at;
     }
-    return "pd.soc" in live || "bmsMaster.soc" in live ? live : null;
+    return Object.keys(values).length > 0 ? { values, seenAt } : null;
+  }
+
+  /** The fields reported recently, when they include the battery level, else null. */
+  fresh(sn: string, now = Date.now()): Record<string, unknown> | null {
+    const live = this.live(sn, now)?.values;
+    return live && hasBatteryLevel(live) ? live : null;
   }
 
   /** When the last message with fields arrived, or 0. */
@@ -162,7 +219,12 @@ export class MqttQuotaStore {
     return this.devices.get(sn)?.updatedAt ?? 0;
   }
 
-  diagnostics(sn: string): MqttQuotaDiagnostics {
+  /** When the last get_reply with data arrived, or 0. */
+  lastReplyAt(sn: string): number {
+    return this.devices.get(sn)?.replyAt ?? 0;
+  }
+
+  diagnostics(sn: string, now = Date.now()): MqttQuotaDiagnostics {
     const entry = this.devices.get(sn);
     return {
       wanted: this.wanted.has(sn),
@@ -171,6 +233,8 @@ export class MqttQuotaStore {
       pushes: entry?.pushes ?? 0,
       replies: entry?.replies ?? 0,
       emptyReplies: entry?.emptyReplies ?? 0,
+      lastReplyAt: entry?.replyAt ? new Date(entry.replyAt).toISOString() : null,
+      liveFieldCount: Object.keys(this.live(sn, now)?.values ?? {}).length,
       samples: entry ? [...entry.samples.values()] : [],
     };
   }

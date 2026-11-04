@@ -54,12 +54,21 @@ export function parseAppTopic(topic: string, userId: string): { sn: string; kind
 }
 
 /**
- * The full-snapshot request the app sends; the reply carries data.quotaMap. "from" is
- * what tolwi/hassio-ecoflow-cloud sends, which EcoFlow accepts.
+ * Formats of the full-snapshot request; the reply carries data.quotaMap. The first is
+ * what tolwi/hassio-ecoflow-cloud sends, the second what the EcoFlow app sends to a
+ * DELTA Max / DELTA Pro (as foxthefox/ioBroker.ecoflow-mqtt does for them). Which one a
+ * device answers is not documented, so both go out until a reply shows it.
  */
-export function latestQuotasRequest(id: number): Record<string, unknown> {
-  return { from: "HomeAssistant", id: String(id), version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {} };
-}
+export const LATEST_QUOTAS_REQUESTS: Array<{ variant: string; build: (id: number) => Record<string, unknown> }> = [
+  {
+    variant: "latestQuotas 1.1",
+    build: (id) => ({ from: "HomeAssistant", id: String(id), version: "1.1", moduleType: 0, operateType: "latestQuotas", params: {} }),
+  },
+  {
+    variant: "latestQuotas 1.0 (app)",
+    build: (id) => ({ from: "iOS", id: String(id), version: "1.0", lang: "en-us", operateType: "latestQuotas", params: {} }),
+  },
+];
 
 /** "ivan@example.com" -> "iv…@example.com", for showing which account is signed in. */
 export function maskEmail(email: string): string {

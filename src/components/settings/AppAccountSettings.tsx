@@ -21,6 +21,12 @@ const errorText = (err: unknown) => {
 
 const inputClass = 'w-full h-10 rounded-md border bg-background px-3 text-sm'
 
+const ago = (iso: string) => {
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000)
+  if (minutes < 1) return 'just now'
+  return minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ${minutes % 60} min ago`
+}
+
 export function AppAccountSettings() {
   const queryClient = useQueryClient()
   const { data: status, isLoading } = useQuery({
@@ -106,6 +112,17 @@ export function AppAccountSettings() {
                 {status.devices.length > 0 ? status.devices.join(', ') : <span className="font-sans text-muted-foreground">none need it now</span>}
               </p>
             </div>
+            {status.connected && status.devices.length > 0 && status.snapshots && (
+              <p className="sm:col-span-3 text-xs text-muted-foreground">
+                Full snapshot (AC power, extra batteries):{' '}
+                {status.snapshots.lastAt ? (
+                  <span className="text-foreground">{ago(status.snapshots.lastAt)}</span>
+                ) : (
+                  'not answered yet; until then they come only from what the station sends by itself'
+                )}
+                {status.snapshots.renewals > 0 && ` · session renewed ${status.snapshots.renewals}× when answers stopped`}
+              </p>
+            )}
             {status.lastError && (
               <p className="sm:col-span-3 text-xs text-energy-red break-words">{status.lastError}</p>
             )}

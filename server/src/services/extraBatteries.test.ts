@@ -55,6 +55,20 @@ assert.equal(merged["bmsSlave2.fullCap"], 80000);
 assert.equal(ble.isHeld(SN, "bmsSlave2"), false);
 assert.equal(ble.lastSeen(SN, "bmsSlave2"), later);
 
+// Over MQTT a message carries part of a pack's block: any live reading keeps it confirmed.
+const mqtt = new ExtraBatteryTracker();
+mqtt.fill(SN, { ...main, ...pack("bmsSlave1", 100) }, t0);
+const partial = mqtt.fill(SN, { ...main, "bmsSlave1.maxCellVol": 3400, "bmsSlave1.inputWatts": 0 }, later);
+assert.deepEqual(connectedExtraBatterySocs(partial), [100]);
+assert.equal(partial["bmsSlave1.maxCellVol"], 3400);
+assert.equal(mqtt.isHeld(SN, "bmsSlave1"), false);
+assert.equal(mqtt.lastSeen(SN, "bmsSlave1"), later);
+// Readings an empty slot also has (0 W, a temperature) do not keep a pack alive
+const idle = new ExtraBatteryTracker();
+idle.fill(SN, { ...main, ...pack("bmsSlave1", 100) }, t0);
+idle.fill(SN, { ...main, "bmsSlave1.inputWatts": 0, "bmsSlave1.temp": 25 }, t0 + 60_000);
+assert.equal(idle.lastSeen(SN, "bmsSlave1"), t0);
+
 // After a restart the stored snapshot seeds the memory.
 const restarted = new ExtraBatteryTracker();
 assert.equal(restarted.knows(SN), false);
