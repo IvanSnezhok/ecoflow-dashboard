@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { MQTT_QUOTA_FRESH_MS, MqttQuotaStore, quotaMessageFields, replyMessageFields } from "./mqttQuota.js";
+import {
+  MQTT_QUOTA_FRESH_MS, MqttQuotaStore, hasBatteryLevel, mergeLive, quotaMessageFields, replyMessageFields,
+} from "./mqttQuota.js";
 
 const sn = "DAEBZ5KF0000000";
 const t0 = 1_800_000_000_000;
@@ -46,6 +48,12 @@ assert.deepEqual(
   { "bmsSlave1.soc": 70 },
 );
 assert.deepEqual(replyMessageFields({ params: { "pd.soc": 50 } }), { "pd.soc": 50 });
+// The cloud's answer for a device it takes as offline is no quota, nor is an empty map
+assert.equal(replyMessageFields({ operateType: "latestQuotas", data: { online: 0, sn } }), null);
+assert.equal(replyMessageFields({ operateType: "latestQuotas", data: { online: 1, sn, quotaMap: {} } }), null);
+// Some replies carry the map as a JSON string
+assert.deepEqual(replyMessageFields({ data: { online: 1, quotaMap: JSON.stringify({ "inv.inputWatts": 180 }) } }), { "inv.inputWatts": 180 });
+assert.equal(replyMessageFields({ data: { online: 1, quotaMap: "not json" } }), null);
 
 const replies = new MqttQuotaStore();
 assert.equal(replies.applyReply(sn, { id: 7, code: "1006", message: "refused" }, t0), false);
@@ -68,4 +76,32 @@ const samples = replies.diagnostics(sn).samples;
 assert.equal(samples.length, 20);
 assert.deepEqual(samples.at(-1)!.message, { params: { f29: 99 } });
 assert.equal(samples.at(-1)!.topic, "…/quota");
+
+// A shared DELTA Max: the Open API push repeats SOC and battery power every few seconds;
+// the app channel had one snapshot and then only messages without the SOC.
+const openApi = new MqttQuotaStore();
+const app = new MqttQuotaStore();
+app.applyReply(sn, { data: { online: 1, quotaMap: { "bmsMaster.soc": 100, "inv.inputWatts": 180, "bmsSlave1.vol": 52000, "bmsSlave1.soc": 100 } } }, t0);
+for (let at = t0; at <= t0 + 3 * 60_000; at += 5_000) {
+  openApi.apply(sn, { params: { "bmsMaster.soc": 100, "bmsMaster.inputWatts": 3, "bmsMaster.outputWatts": 0 } }, at);
+}
+app.apply(sn, { params: { "inv.inputWatts": 176, "bmsSlave1.vol": 52010 } }, t0 + 2.5 * 60_000);
+const now = t0 + 3 * 60_000;
+assert.equal(app.fresh(sn, now), null, "the app channel alone lacks a fresh SOC");
+const merged = mergeLive(openApi.live(sn, now), app.live(sn, now));
+assert.equal(hasBatteryLevel(merged), true, "the push supplies it");
+assert.equal(merged["inv.inputWatts"], 176, "AC input from the app channel is kept");
+assert.equal(merged["bmsSlave1.vol"], 52010, "and the extra battery");
+assert.equal("bmsSlave1.soc" in merged, false, "a snapshot field older than 2 min still drops out");
+assert.equal(app.lastReplyAt(sn), t0);
+assert.equal(app.diagnostics(sn, now).liveFieldCount, 2);
+assert.equal(app.diagnostics(sn, now).lastReplyAt, new Date(t0).toISOString());
+
+// For a field both report, the newer report wins whichever channel sent it
+const older = { values: { "pd.soc": 80, a: 1 }, seenAt: { "pd.soc": t0, a: t0 } };
+const newer = { values: { "pd.soc": 81 }, seenAt: { "pd.soc": t0 + 1 } };
+assert.deepEqual(mergeLive(older, newer), { "pd.soc": 81, a: 1 });
+assert.deepEqual(mergeLive(newer, older), { "pd.soc": 81, a: 1 });
+assert.deepEqual(mergeLive(null, null), {});
+assert.equal(new MqttQuotaStore().live(sn, t0), null);
 console.log("MQTT quota store passed");

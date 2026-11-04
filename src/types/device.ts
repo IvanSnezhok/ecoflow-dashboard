@@ -126,6 +126,14 @@ export interface AppChannelStatus {
   lastError: string | null;
   devices: string[];
   envConfigured: boolean;
+  /** Full-snapshot (latestQuotas) requests and their answers */
+  snapshots?: {
+    sent: number;
+    lastSentAt: string | null;
+    variant: string | null;
+    lastAt: string | null;
+    renewals: number;
+  };
 }
 
 export interface ExtraBatteryState {
@@ -166,6 +174,8 @@ export interface DeviceState {
   batterySoc: number; // State of charge (0-100)
   batteryWatts: number; // Positive = charging, negative = discharging
   acInputWatts: number;
+  /** false: the quota lacked the AC input power (a shared device read over MQTT), so acInputWatts 0 means unknown */
+  acInputReported?: boolean;
   solarInputWatts: number;
   acOutputWatts: number;
   dcOutputWatts: number;

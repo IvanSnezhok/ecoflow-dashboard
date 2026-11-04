@@ -5,7 +5,7 @@ import { getSupportedCommand, type DeviceAction } from "./deviceProfiles.js";
 import { bleBridge, mergeQuotas, CLOUD_BASE_FRESH_MS } from "./bleBridge.js";
 import { extraBatteries } from "./extraBatteries.js";
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
-import { mqttQuotas } from "./mqttQuota.js";
+import { hasBatteryLevel, mergeLive, mqttQuotas } from "./mqttQuota.js";
 import { appQuotas } from "./appChannel.js";
 
 interface ApiResponse<T> {
@@ -263,8 +263,8 @@ class EcoflowApiClient {
   /**
    * The REST quota, or for a device whose REST reads the API refuses (code 1006, e.g.
    * one shared from another account) what MQTT serves: the Open API push (a subset, see
-   * mqttQuota.ts) under the full quota from the EcoFlow app channel when signed in
-   * (appChannel.ts).
+   * mqttQuota.ts) and the full quota from the EcoFlow app channel when signed in
+   * (appChannel.ts), merged field by field with the newest report winning.
    */
   private async getServedQuota(sn: string): Promise<{ quota: DeviceQuota; source: "cloud" | "mqtt" | "app" }> {
     const refused = this.restRefused.get(sn);
@@ -288,10 +288,13 @@ class EcoflowApiClient {
       }
     }
 
-    const pushed = mqttQuotas.fresh(sn);
-    const app = appQuotas.fresh(sn);
-    if (app) return { quota: { ...pushed, ...app } as DeviceQuota, source: "app" };
-    if (pushed) return { quota: pushed as DeviceQuota, source: "mqtt" };
+    // Merged before the battery-level check: the app channel may go minutes without
+    // repeating an unchanged SOC while the Open API push repeats it every few seconds.
+    // Requiring the SOC from the app channel alone threw its AC power and extra batteries
+    // away whenever the SOC stood still (a full battery in bypass, for one).
+    const app = appQuotas.live(sn);
+    const quota = mergeLive(mqttQuotas.live(sn), app);
+    if (hasBatteryLevel(quota)) return { quota: quota as DeviceQuota, source: app ? "app" : "mqtt" };
     const { error } = this.restRefused.get(sn)!;
     const note = mqttQuotas.lastMessageAt(sn) ? "MQTT pushes lack the battery level" : "no MQTT data yet";
     throw new EcoflowApiError(error.code, `${error.apiMessage} (${note})`);

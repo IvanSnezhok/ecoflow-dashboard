@@ -7,6 +7,9 @@
  * made the outage runtime forecast (Slack) count a single extra pack. The tracker
  * remembers each pack's last block and fills it into quotas that lack it, until the
  * pack has not been reported for EXTRA_BATTERY_HOLD_MS (then it is taken as removed).
+ *
+ * The same holds for a device read over MQTT (mqttQuota.ts): its messages carry part of
+ * a pack's block at a time, so any live reading of a known pack confirms it is there.
  */
 
 export const EXTRA_BATTERY_PREFIXES = ["bmsSlave1", "bmsSlave2"] as const;
@@ -22,6 +25,12 @@ const positive = (value: unknown): value is number =>
 export function hasExtraBattery(q: Record<string, unknown>, prefix: string): boolean {
   return positive(q[`${prefix}.fullCap`]) || positive(q[`${prefix}.vol`]);
 }
+
+/** Readings that are 0 in an empty slot; one of them above 0 shows a known pack is still there. */
+const PACK_READINGS = ["soc", "vol", "fullCap", "remainCap", "designCap", "maxCellVol", "minCellVol"];
+
+const packReported = (q: Record<string, unknown>, prefix: string): boolean =>
+  PACK_READINGS.some((field) => positive(q[`${prefix}.${field}`]));
 
 /** Pack SOC in percent: `soc`, else remainCap / fullCap; null when neither is known. */
 export function extraBatterySoc(q: Record<string, unknown>, prefix: string): number | null {
@@ -85,8 +94,9 @@ export class ExtraBatteryTracker {
         continue;
       }
       if (!memory) continue;
-      // BLE lists only connected packs, so a live SOC confirms the pack is still there.
-      if (positive(quota[`${prefix}.soc`])) memory.seenAt = now;
+      // BLE lists only connected packs, so a live SOC confirms the pack is still there;
+      // so does part of its block in an MQTT message.
+      if (packReported(quota, prefix)) memory.seenAt = now;
       if (now - memory.seenAt > this.holdMs) {
         packs.delete(prefix);
         continue;

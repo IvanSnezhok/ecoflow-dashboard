@@ -5,6 +5,11 @@
 // the token (never the password) and reads such devices over the app's MQTT: their
 // /app/device/property/<sn> pushes plus the latestQuotas snapshot the app asks for.
 // Unofficial: EcoFlow may change it without notice. Read-only: no commands go out here.
+//
+// Such a device often goes quiet on this channel until its owner opens the EcoFlow app,
+// and a session can stop getting answers while it stays connected (ioBroker.ecoflow-mqtt
+// users see the same and restart). So both known snapshot formats go out until one is
+// answered, and a session that gets no snapshot for a while is renewed, backing off.
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,7 +21,7 @@ import {
   appTopics,
   defaultAppRegion,
   isAppRegion,
-  latestQuotasRequest,
+  LATEST_QUOTAS_REQUESTS,
   loginBody,
   maskEmail,
   parseAppTopic,
@@ -31,6 +36,10 @@ const LATEST_QUOTAS_INTERVAL_MS = 20_000;
 /** After a failed connect (no internet, broker refused), try again this often */
 const RETRY_MS = 5 * 60_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+/** No snapshot for this long while asking every 20 s: renew the session (fresh certificate and client ID) */
+const STALL_FIRST_MS = 5 * 60_000;
+/** Each renewal that brings no snapshot doubles the wait, up to this */
+const STALL_MAX_MS = 60 * 60_000;
 
 /** EcoFlow refused the login, or the saved token: signing in again is needed. */
 export class AppAuthError extends Error {}
@@ -57,6 +66,17 @@ export interface AppChannelStatus {
   /** Devices read through the app channel: the ones the Open API refuses over REST */
   devices: string[];
   envConfigured: boolean;
+  /** The full-snapshot (latestQuotas) requests and how they are answered */
+  snapshots: {
+    sent: number;
+    lastSentAt: string | null;
+    /** The request format a reply showed working; null while every format goes out */
+    variant: string | null;
+    /** The last reply with data, from any of the devices */
+    lastAt: string | null;
+    /** Sessions renewed because no snapshot came */
+    renewals: number;
+  };
 }
 
 /** Quota merged from the app channel, read by ecoflowApi for REST-refused devices */
@@ -83,6 +103,14 @@ class AppChannel {
   private retryTimer: NodeJS.Timeout | null = null;
   private seq = Date.now();
   private seen = new Set<string>();
+  private connectedAt = 0;
+  private getsSent = 0;
+  private lastGetAt = 0;
+  /** Request id -> LATEST_QUOTAS_REQUESTS index, until a reply with data shows which works */
+  private pendingGets = new Map<string, number>();
+  private getVariant: number | null = null;
+  private stallAfterMs = STALL_FIRST_MS;
+  private renewals = 0;
 
   constructor() {
     mqttQuotas.onWant((sn) => this.subscribe(sn));
@@ -138,7 +166,18 @@ class AppChannel {
       lastError: this.lastError,
       devices: mqttQuotas.wantedDevices(),
       envConfigured: this.envConfigured,
+      snapshots: {
+        sent: this.getsSent,
+        lastSentAt: this.lastGetAt ? new Date(this.lastGetAt).toISOString() : null,
+        variant: this.getVariant !== null ? LATEST_QUOTAS_REQUESTS[this.getVariant].variant : null,
+        lastAt: this.lastSnapshotAt() ? new Date(this.lastSnapshotAt()).toISOString() : null,
+        renewals: this.renewals,
+      },
     };
+  }
+
+  private lastSnapshotAt(): number {
+    return Math.max(0, ...mqttQuotas.wantedDevices().map((sn) => appQuotas.lastReplyAt(sn)));
   }
 
   private async authenticate(email: string, password: string, region: AppRegion, source: Account["source"]): Promise<Account> {
@@ -228,11 +267,13 @@ class AppChannel {
 
     client.on("connect", () => {
       this.connected = true;
+      this.connectedAt = Date.now();
       this.lastError = null;
       console.log(`[AppChannel] Connected as ${account.emailHint}`);
       for (const sn of mqttQuotas.wantedDevices()) this.subscribe(sn);
       this.refreshTimer ??= setInterval(() => {
         for (const sn of mqttQuotas.wantedDevices()) this.requestLatestQuotas(sn);
+        this.renewIfStalled();
       }, LATEST_QUOTAS_INTERVAL_MS);
     });
 
@@ -247,6 +288,7 @@ class AppChannel {
       }
       appQuotas.sample(parsed.sn, topic, message);
       const full = parsed.kind === "getReply" ? appQuotas.applyReply(parsed.sn, message) : appQuotas.apply(parsed.sn, message);
+      if (full && parsed.kind === "getReply") this.snapshotArrived(message);
       const key = `${parsed.sn}:${parsed.kind}`;
       if (full && !this.seen.has(key)) {
         this.seen.add(key);
@@ -266,7 +308,8 @@ class AppChannel {
     });
 
     client.on("close", () => {
-      this.connected = false;
+      // A renewed session's old client may report closing after the new one connected
+      if (this.client === client) this.connected = false;
     });
   }
 
@@ -293,12 +336,51 @@ class AppChannel {
     this.requestLatestQuotas(sn);
   }
 
+  /** Ask for a full snapshot: in every known format until a reply shows which one works. */
   private requestLatestQuotas(sn: string): void {
     const client = this.client;
     const account = this.account;
     if (!client?.connected || !account) return;
-    // QoS 0, as in mqttService.ts: a refused QoS 1 publish is resent on every reconnect
-    client.publish(appTopics(account.userId, sn).get, JSON.stringify(latestQuotasRequest(++this.seq)), { qos: 0 });
+    const variants = this.getVariant !== null ? [this.getVariant] : LATEST_QUOTAS_REQUESTS.map((_, index) => index);
+    if (this.pendingGets.size > 200) this.pendingGets.clear();
+    for (const variant of variants) {
+      const id = ++this.seq;
+      if (this.getVariant === null) this.pendingGets.set(String(id), variant);
+      // QoS 0, as in mqttService.ts: a refused QoS 1 publish is resent on every reconnect
+      client.publish(appTopics(account.userId, sn).get, JSON.stringify(LATEST_QUOTAS_REQUESTS[variant].build(id)), { qos: 0 });
+      this.getsSent++;
+    }
+    this.lastGetAt = Date.now();
+  }
+
+  /** A reply with data: the session works, and its id tells which request format did. */
+  private snapshotArrived(message: unknown): void {
+    this.stallAfterMs = STALL_FIRST_MS;
+    if (this.getVariant !== null) return;
+    const variant = this.pendingGets.get(String((message as { id?: unknown }).id));
+    if (variant === undefined) return;
+    this.getVariant = variant;
+    this.pendingGets.clear();
+    console.log(`[AppChannel] The "${LATEST_QUOTAS_REQUESTS[variant].variant}" request answers; using it from now on`);
+  }
+
+  /**
+   * Renew a connected session that got no snapshot for stallAfterMs although one was
+   * asked for every 20 s: a fresh certificate and client ID, every request format again.
+   * The wait doubles with each renewal that brings nothing, up to an hour.
+   */
+  private renewIfStalled(now = Date.now()): void {
+    const account = this.account;
+    if (!account || !this.connected || this.getsSent === 0 || mqttQuotas.wantedDevices().length === 0) return;
+    const quietSince = Math.max(this.connectedAt, this.lastSnapshotAt());
+    if (now - quietSince < this.stallAfterMs) return;
+    const minutes = Math.round((now - quietSince) / 60_000);
+    this.stallAfterMs = Math.min(this.stallAfterMs * 2, STALL_MAX_MS);
+    this.renewals++;
+    this.getVariant = null;
+    this.pendingGets.clear();
+    console.warn(`[AppChannel] No full snapshot for ${minutes} min; renewing the session (next check in ${Math.round(this.stallAfterMs / 60_000)} min)`);
+    void this.resume(account);
   }
 
   private load(): Account | null {
