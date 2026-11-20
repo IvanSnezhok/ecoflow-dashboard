@@ -1,0 +1,13 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      // The app's own code, then the panel's: shared panel files import "@/types/..."
+      "@/*": ["./src/*", "../src/*"],
+      // Panel code shared with the app (types, device store, pure helpers)
+      "@panel/*": ["../src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+}

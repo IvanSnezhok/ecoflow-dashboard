@@ -40,6 +40,7 @@ import { panelAuth } from "./services/panelAuth.js";
 import { canAccessDevice } from "./lib/permissions.js";
 import { appChannel } from "./services/appChannel.js";
 import { redactBody } from "./lib/redact.js";
+import { SESSION_SUBPROTOCOL } from "./lib/cookies.js";
 import { processResilienceAutomation } from "./services/resilienceService.js";
 
 const app = express();
@@ -159,6 +160,8 @@ const wss = new WebSocketServer({
   server,
   path: "/ws",
   verifyClient: (info, done) => (panelAuth.isAuthorized(info.req) ? done(true) : done(false, 401, "Sign in required")),
+  // The phone app offers [SESSION_SUBPROTOCOL, <token>]; only the name is echoed back
+  handleProtocols: (protocols) => (protocols.has(SESSION_SUBPROTOCOL) ? SESSION_SUBPROTOCOL : false),
 });
 // Each socket remembers its session: device updates go only to users who may see the
 // device, and a socket whose session ends (signed out, user removed) is closed

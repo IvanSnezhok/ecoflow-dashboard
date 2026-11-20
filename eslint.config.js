@@ -34,6 +34,8 @@ export default [
       '**/node_modules/**',
       'dist/**',
       'server/dist/**',
+      // The phone app has its own ESLint config (mobile/eslint.config.js)
+      'mobile/**',
       '**/*.test.js',
       'vite.config.js',
       'vite.config.d.ts',

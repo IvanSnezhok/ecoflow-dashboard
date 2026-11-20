@@ -17,6 +17,10 @@ function fail(res: Response, error: unknown) {
   res.status(500).json({ error: "Sign-in failed" });
 }
 
+/** Sign-in answers: the phone app also gets its session token (see panelAuth.createSession). */
+const withToken = <T extends object>(res: Response, status: T): T =>
+  typeof res.locals.sessionToken === "string" ? { ...status, token: res.locals.sessionToken } : status;
+
 router.get("/status", (req: Request, res: Response) => {
   res.json(panelAuth.status(req));
 });
@@ -33,7 +37,7 @@ router.post("/setup/finish", (req: Request, res: Response) => {
   try {
     const status = panelAuth.finishSetup(text(req.body?.setupId), text(req.body?.otp), req.body?.remember === true, req, res);
     insertLog(null, "COMMAND", "panelLoginSetup", JSON.stringify({ username: status.username }), JSON.stringify({ success: true }), true, null);
-    res.json(status);
+    res.json(withToken(res, status));
   } catch (error) {
     fail(res, error);
   }
@@ -45,7 +49,7 @@ router.post("/login", async (req: Request, res: Response) => {
   try {
     const status = await panelAuth.login(username, text(req.body?.password), text(req.body?.otp), remember, req, res);
     insertLog(null, "COMMAND", "panelLogin", JSON.stringify({ username, remember }), JSON.stringify({ success: true }), true, null);
-    res.json(status);
+    res.json(withToken(res, status));
   } catch (error) {
     // Failed attempts are kept, so guessing shows up in the Logs page
     insertLog(null, "COMMAND", "panelLogin", JSON.stringify({ username, remember }), null, false, error instanceof Error ? error.message : "failed");
@@ -100,7 +104,7 @@ router.post("/invite/finish", (req: Request, res: Response) => {
   try {
     const status = panelAuth.finishInvite(text(req.body?.setupId), text(req.body?.otp), req.body?.remember === true, req, res);
     insertLog(null, "COMMAND", "panelInviteAccepted", JSON.stringify({ username: status.username, role: status.role }), JSON.stringify({ success: true }), true, null);
-    res.json(status);
+    res.json(withToken(res, status));
   } catch (error) {
     fail(res, error);
   }

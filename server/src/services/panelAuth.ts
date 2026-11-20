@@ -21,7 +21,7 @@ import type { NextFunction, Request, Response } from "express";
 import QRCode from "qrcode";
 import { db, getDeviceById, getDeviceBySn, getResilienceSettings } from "../db/database.js";
 import { config } from "../config/env.js";
-import { parseCookies } from "../lib/cookies.js";
+import { sessionIdFrom } from "../lib/cookies.js";
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from "../lib/password.js";
 import { generateTotpSecret, otpauthUri, verifyTotp } from "../lib/totp.js";
 import { canAccessDevice, isOwner, type MemberRole, type PanelRole, type PanelUser } from "../lib/permissions.js";
@@ -189,6 +189,11 @@ const normalizeCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g,
 const hashSessionId = (id: string) => sha256(id).toString("hex");
 const hashInviteToken = (token: string) => sha256(token.trim()).toString("hex");
 
+/** The phone app (mobile/) signs in with `client: "app"` and gets the session id in the answer instead of a cookie. */
+export function isAppClient(req: Request): boolean {
+  return (req.body as { client?: unknown } | undefined)?.client === "app";
+}
+
 function isHttps(req: Request): boolean {
   // The port is published on 127.0.0.1 only, so the header comes from the tunnel
   return req.secure || req.headers["x-forwarded-proto"] === "https";
@@ -349,7 +354,7 @@ class PanelAuth {
   }
 
   logout(req: Request, res: Response): void {
-    const id = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const id = sessionIdFrom(req.headers, SESSION_COOKIE);
     if (id) db.prepare("DELETE FROM auth_sessions WHERE id_hash = ?").run(hashSessionId(id));
     res.clearCookie(SESSION_COOKIE, { path: "/" });
   }
@@ -495,7 +500,7 @@ class PanelAuth {
   /** The valid session behind a request's cookie, extending it with use. */
   sessionFor(req: IncomingMessage): SessionRow | null {
     if (!this.account) return null;
-    const id = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const id = sessionIdFrom(req.headers, SESSION_COOKIE);
     if (!id) return null;
     const row = db.prepare("SELECT * FROM auth_sessions WHERE id_hash = ?").get(hashSessionId(id)) as SessionRow | undefined;
     const now = Date.now();
@@ -682,8 +687,14 @@ class PanelAuth {
     const userAgent = String(req.headers["user-agent"] ?? "").slice(0, 200) || null;
     db.prepare("INSERT INTO auth_sessions (id_hash, user_id, created_at, last_seen_at, expires_at, remember, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(hashSessionId(id), userId, now, now, now + (remember ? REMEMBER_MS : SESSION_MS), remember ? 1 : 0, userAgent);
-    // req.headers.cookie is read again by status(): point it at the new session
+    // The request is read again by status(): point it at the new session
+    delete req.headers.authorization;
     req.headers.cookie = `${SESSION_COOKIE}=${encodeURIComponent(id)}`;
+    if (isAppClient(req)) {
+      // The phone app keeps the id in the device keychain and sends it as a Bearer token
+      res.locals.sessionToken = id;
+      return;
+    }
     res.cookie(SESSION_COOKIE, id, {
       httpOnly: true,
       sameSite: "lax",

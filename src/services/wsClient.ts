@@ -1,4 +1,5 @@
 import { useDeviceStore } from '@/stores/deviceStore'
+import { liveFieldsOf } from '@/lib/liveUpdate'
 import type { DeviceState } from '@/types/device'
 
 export interface LiveStatus {
@@ -92,34 +93,7 @@ class WebSocketClient {
 
     if (!update.sn || !update.data) return
 
-    // MQTT pushes only the keys that changed (usually inside `params`); apply just
-    // those, so a partial message never resets SOC or power to 0
-    // A get_reply (full snapshot) nests the values under data, or data.quotaMap
-    const reply = update.data.data as Record<string, unknown> | undefined
-    const raw = (update.data.params ?? reply?.quotaMap ?? reply ?? update.data) as Record<string, unknown>
-    const num = (...keys: string[]) => {
-      for (const key of keys) {
-        const value = raw[key]
-        if (typeof value === 'number' && Number.isFinite(value)) return value
-      }
-      return undefined
-    }
-    const soc = num('pd.soc', 'bmsMaster.soc', 'soc')
-    const wattsIn = num('pd.wattsInSum', 'wattsInSum')
-    const wattsOut = num('pd.wattsOutSum', 'wattsOutSum')
-    const fields: Partial<DeviceState> = {
-      batterySoc: soc !== undefined && soc > 0 ? soc : undefined,
-      batteryWatts: wattsIn !== undefined && wattsOut !== undefined ? wattsIn - wattsOut : undefined,
-      acInputWatts: num('inv.inputWatts', 'acInWatts'),
-      solarInputWatts: num('mppt.inWatts', 'pvInWatts'),
-      acOutputWatts: num('inv.outputWatts', 'acOutWatts'),
-      dcOutputWatts: num('mppt.outWatts', 'dcOutWatts'),
-      temperature: num('inv.outTemp', 'bmsMaster.temp', 'temp'),
-    }
-    if (fields.acInputWatts !== undefined) fields.acInputReported = true
-    const changed = Object.fromEntries(
-      Object.entries(fields).filter(([, value]) => value !== undefined)
-    ) as Partial<DeviceState>
+    const changed = liveFieldsOf(update.data)
     if (Object.keys(changed).length === 0) return
 
     this.liveUpdates.set(update.sn, { ...this.liveUpdates.get(update.sn), ...changed })

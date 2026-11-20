@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { parseCookies } from "./cookies.js";
+import { parseCookies, sessionIdFrom, SESSION_SUBPROTOCOL } from "./cookies.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { canAccessDevice, canControl, isMemberRole, isOwner, parseDeviceList, type PanelUser } from "./permissions.js";
 import { base32Decode, base32Encode, generateTotpSecret, otpauthUri, totpAt, totpCounter, verifyTotp } from "./totp.js";
@@ -48,6 +48,16 @@ assert.equal(await verifyPassword("anything", "md5$abc"), false);
 
 assert.deepEqual(parseCookies("a=1; ecoflow_session=abc%3D%3D; broken; =x; b=%E0"), { a: "1", ecoflow_session: "abc==" });
 assert.deepEqual(parseCookies(undefined), {});
+
+// Session id: the phone app's token (header or /ws subprotocol) wins over a cookie
+const token = "A".repeat(43);
+assert.equal(sessionIdFrom({ cookie: "ecoflow_session=fromCookie" }, "ecoflow_session"), "fromCookie");
+assert.equal(sessionIdFrom({ authorization: `Bearer ${token}`, cookie: "ecoflow_session=stale" }, "ecoflow_session"), token);
+assert.equal(sessionIdFrom({ "sec-websocket-protocol": `${SESSION_SUBPROTOCOL}, ${token}` }, "ecoflow_session"), token);
+assert.equal(sessionIdFrom({ "sec-websocket-protocol": `other, ${token}` }, "ecoflow_session"), null);
+assert.equal(sessionIdFrom({ authorization: "Bearer short" }, "ecoflow_session"), null);
+assert.equal(sessionIdFrom({ authorization: `Basic ${token}` }, "ecoflow_session"), null);
+assert.equal(sessionIdFrom({}, "ecoflow_session"), null);
 
 // Roles: the owner sees and changes everything; invited users only their devices
 const owner: PanelUser = { id: "owner", username: "ivan", role: "owner", devices: null };
