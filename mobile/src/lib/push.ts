@@ -128,3 +128,7 @@ export const usePush = create<PushStore>((set, get) => {
     },
   };
 });
+
+/** The notification the user tapped, if any. The browser preview has no notifications at all */
+export const useNotificationTap: () => Notifications.NotificationResponse | null | undefined =
+  Platform.OS === 'web' ? () => null : Notifications.useLastNotificationResponse;

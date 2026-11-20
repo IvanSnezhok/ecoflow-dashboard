@@ -1,4 +1,3 @@
-import * as Notifications from 'expo-notifications';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, router, type Href } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -6,10 +5,12 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
 import { useLanguage } from '@/i18n';
+import { registerBackgroundRefresh } from '@/lib/background';
 import { useGridSync } from '@/lib/grid';
-import { usePush } from '@/lib/push';
+import { useNotificationTap, usePush } from '@/lib/push';
 import { useSession } from '@/lib/session';
 import { useDeviceSync } from '@/lib/useDeviceSync';
+import { useWidgetSync } from '@/lib/widgets';
 import { useTheme } from '@/theme';
 
 void SplashScreen.preventAutoHideAsync();
@@ -29,6 +30,11 @@ export default function RootLayout() {
 
   useDeviceSync();
   useGridSync();
+  useWidgetSync();
+
+  useEffect(() => {
+    if (phase === 'signedIn') void registerBackgroundRefresh();
+  }, [phase]);
 
   // A phone with notifications on registers under each new session, in the app's language
   const language = useLanguage((s) => s.language);
@@ -37,7 +43,7 @@ export default function RootLayout() {
   }, [phase, language]);
 
   // Tapping a notification opens what it is about (the server sends `url`)
-  const tapped = Notifications.useLastNotificationResponse();
+  const tapped = useNotificationTap();
   useEffect(() => {
     if (Platform.OS === 'web' || phase !== 'signedIn' || !tapped) return;
     const url = tapped.notification.request.content.data?.url;

@@ -44,7 +44,39 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 96
         }
-      ]
+      ],
+      [
+        "expo-widgets",
+        {
+          "enablePushNotifications": true,
+          "enableAndroid": true,
+          "widgets": [
+            {
+              "name": "StationWidget",
+              "displayName": "EcoFlow Panel",
+              "description": "Battery level, power and outage state of your station",
+              "ios": {
+                "supportedFamilies": [
+                  "systemSmall",
+                  "systemMedium",
+                  "accessoryCircular",
+                  "accessoryRectangular",
+                  "accessoryInline"
+                ],
+                "initialLayout": "./src/widgets/station.ios.tsx"
+              },
+              "android": {
+                "targetCellWidth": 3,
+                "targetCellHeight": 2,
+                "minWidth": 180,
+                "minHeight": 110,
+                "initialLayout": "./src/widgets/station.android.tsx"
+              }
+            }
+          ]
+        }
+      ],
+      "expo-background-task"
     ],
     "experiments": {
       "typedRoutes": true,

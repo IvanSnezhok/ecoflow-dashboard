@@ -415,6 +415,12 @@ export async function processResilienceAutomation(
       soc: metrics.soc,
       reserveHours: cachedStatus.forecast?.hoursRemaining ?? null,
       outageMinutes: finishedOutage(grid)?.minutes ?? null,
+      since: gridTracker.sinceMs ?? null,
+    })
+  } else if (gridState === 'off') {
+    const device = getDeviceById(metrics.deviceId) as { name?: string | null } | undefined
+    pushService.outageTick(metrics.serialNumber, device?.name || metrics.serialNumber, {
+      soc: metrics.soc, reserveHours: cachedStatus.forecast?.hoursRemaining ?? null, since: gridTracker.sinceMs ?? null,
     })
   }
 }

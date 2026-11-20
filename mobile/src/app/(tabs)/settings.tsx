@@ -12,6 +12,7 @@ import { api, errorMessage, type PushPrefs } from '@/lib/api';
 import { ago } from '@/lib/format';
 import { useLiveStatus } from '@/lib/live';
 import { usePush } from '@/lib/push';
+import { liveActivityEnabled, setLiveActivityEnabled } from '@/lib/widgets';
 import { useAccess, useSession } from '@/lib/session';
 import { space, useTheme } from '@/theme';
 
@@ -76,6 +77,7 @@ export default function Settings() {
       </Card>
 
       <NotificationsCard />
+      {Platform.OS === 'ios' ? <LiveActivityCard /> : null}
 
       <Card>
         <CardTitle>{t('settings.language')}</CardTitle>
@@ -103,6 +105,35 @@ export default function Settings() {
         EcoFlow Panel {Constants.expoConfig?.version ?? ''}{current ? `  ·  ${ago(current.createdAt)}` : ''}
       </Muted>
     </Screen>
+  );
+}
+
+function LiveActivityCard() {
+  const theme = useTheme();
+  const t = useT();
+  const [enabled, setEnabled] = useState(true);
+  useEffect(() => {
+    void liveActivityEnabled().then(setEnabled);
+  }, []);
+  return (
+    <Card>
+      <CardTitle
+        right={(
+          <Switch
+            accessibilityLabel={t('settings.liveActivity')}
+            value={enabled}
+            onValueChange={(value) => {
+              setEnabled(value);
+              void setLiveActivityEnabled(value);
+            }}
+            trackColor={{ true: theme.primary, false: theme.raised }}
+            thumbColor="#FFFFFF"
+          />
+        )}>
+        {t('settings.liveActivity')}
+      </CardTitle>
+      <Muted>{t('settings.liveActivityNote')}</Muted>
+    </Card>
   );
 }
 

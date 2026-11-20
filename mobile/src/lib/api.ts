@@ -165,6 +165,10 @@ export const api = {
 
   pushUnregister: (token: string) => call<{ registered: boolean }>('/push/unregister', { method: 'POST', body: { token } }),
 
+  /** iPhone: the tokens that let the panel start and refresh the outage Live Activity */
+  pushLiveActivity: (token: string, tokens: { startToken?: string | null; activityToken?: string | null }) =>
+    call<{ saved: boolean; ready: boolean }>('/push/live-activity', { method: 'POST', body: { token, ...tokens } }),
+
   pushTest: (token: string) => call<{ sent: boolean }>('/push/test', { method: 'POST', body: { token } }),
 
   resilienceStatus: () => unwrap(call<Wrapped<ResilienceStatus>>('/resilience/status')),

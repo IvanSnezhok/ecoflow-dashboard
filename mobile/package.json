@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@expo/ui": "~58.0.29",
     "expo": "~58.0.26",
+    "expo-background-task": "~58.0.13",
     "expo-constants": "~58.0.16",
     "expo-font": "~58.0.12",
     "expo-haptics": "~58.0.8",
@@ -14,6 +16,8 @@
     "expo-splash-screen": "~58.0.14",
     "expo-status-bar": "~58.0.5",
     "expo-system-ui": "~58.0.7",
+    "expo-task-manager": "~58.0.14",
+    "expo-widgets": "~58.0.29",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
