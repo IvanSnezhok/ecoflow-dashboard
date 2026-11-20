@@ -14,8 +14,10 @@ import {
   upsertOutageScheduleDay,
   type OutageScheduleDayRow,
   type ResilienceSettingsRow,
+  getDeviceById,
 } from '../db/database.js'
 import { sendSlackRichMessage } from './slackService.js'
+import { pushService } from './pushService.js'
 import {
   decideAcAction,
   detectAlerts,
@@ -405,6 +407,16 @@ export async function processResilienceAutomation(
   const acOutputWatts = Number(rawData['inv.outputWatts'] ?? 0) || 0
   cachedStatus.acAction = await runAcAutomation(settings, metrics, rawData, acOutputWatts)
   if (settings.notifySlack) await sendAlerts(metrics.soc, settings, acOutputWatts, finishedOutage(grid))
+  // The phone app: power lost or restored (not the first reading after a start)
+  const gridState = gridTracker.state
+  if (grid.changed && grid.previous !== 'unknown' && gridState !== 'unknown') {
+    const device = getDeviceById(metrics.deviceId) as { name?: string | null } | undefined
+    pushService.gridChanged(metrics.serialNumber, device?.name || metrics.serialNumber, gridState, {
+      soc: metrics.soc,
+      reserveHours: cachedStatus.forecast?.hoursRemaining ?? null,
+      outageMinutes: finishedOutage(grid)?.minutes ?? null,
+    })
+  }
 }
 
 function restoreAcState(deviceId: number): void {

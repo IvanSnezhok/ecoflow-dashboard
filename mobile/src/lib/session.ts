@@ -6,6 +6,7 @@ import type { AuthStatus } from '@panel/types/device';
 import { tNow } from '@/i18n';
 
 import { ApiError, api, setConnection } from './api';
+import { usePush } from './push';
 import { normalizeServerUrl } from './serverUrl';
 import { readItem, writeItem } from './storage';
 
@@ -102,6 +103,8 @@ export const useSession = create<SessionStore>((set, get) => {
 
     signOut: async () => {
       // Ends the session on the panel too; signing out works even when it is unreachable
+      // This phone stops getting notifications of the account it leaves
+      await usePush.getState().forget();
       await api.signOut().catch(() => undefined);
       close(null);
     },

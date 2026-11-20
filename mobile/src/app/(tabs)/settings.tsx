@@ -1,15 +1,17 @@
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, Switch, Text, View } from 'react-native';
 
 import type { AuthSession } from '@panel/types/device';
 
 import { Screen } from '@/components/Screen';
+import { Slider } from '@/components/Slider';
 import { Button, Card, CardTitle, Muted, Row } from '@/components/ui';
 import { useLanguage, useT, type Key, type LanguageChoice } from '@/i18n';
-import { api } from '@/lib/api';
+import { api, errorMessage, type PushPrefs } from '@/lib/api';
 import { ago } from '@/lib/format';
 import { useLiveStatus } from '@/lib/live';
+import { usePush } from '@/lib/push';
 import { useAccess, useSession } from '@/lib/session';
 import { space, useTheme } from '@/theme';
 
@@ -73,6 +75,8 @@ export default function Settings() {
         </Muted>
       </Card>
 
+      <NotificationsCard />
+
       <Card>
         <CardTitle>{t('settings.language')}</CardTitle>
         <View accessibilityRole="tablist" style={{ flexDirection: 'row', backgroundColor: theme.raised, borderRadius: 10, padding: 3 }}>
@@ -99,6 +103,89 @@ export default function Settings() {
         EcoFlow Panel {Constants.expoConfig?.version ?? ''}{current ? `  ·  ${ago(current.createdAt)}` : ''}
       </Muted>
     </Screen>
+  );
+}
+
+function NotificationsCard() {
+  const theme = useTheme();
+  const t = useT();
+  const { state, prefs, error, token } = usePush();
+  const [busy, setBusy] = useState(false);
+  const [tested, setTested] = useState<string | null>(null);
+
+  const turnOn = async () => {
+    setBusy(true);
+    await usePush.getState().enable();
+    setBusy(false);
+  };
+  const change = (next: Partial<PushPrefs>) => void usePush.getState().setPrefs({ ...prefs, ...next });
+  const test = async () => {
+    if (!token) return;
+    setTested(null);
+    try {
+      await api.pushTest(token);
+      setTested(t('settings.notify.testSent'));
+    } catch (failure) {
+      setTested(errorMessage(failure));
+    }
+  };
+  const toggle = (key: 'grid' | 'lowBattery' | 'offline', first?: boolean) => (
+    <Row
+      first={first}
+      label={t(`settings.notify.${key}` as Key)}
+      value={(
+        <Switch
+          accessibilityLabel={t(`settings.notify.${key}` as Key)}
+          value={prefs[key]}
+          onValueChange={(value) => change({ [key]: value })}
+          trackColor={{ true: theme.primary, false: theme.raised }}
+          thumbColor="#FFFFFF"
+        />
+      )}
+    />
+  );
+
+  return (
+    <Card>
+      <CardTitle
+        right={state === 'on' ? (
+          <Switch
+            accessibilityLabel={t('settings.notifications')}
+            value
+            onValueChange={() => void usePush.getState().disable()}
+            trackColor={{ true: theme.primary, false: theme.raised }}
+            thumbColor="#FFFFFF"
+          />
+        ) : undefined}>
+        {t('settings.notifications')}
+      </CardTitle>
+      {state === 'unavailable' ? <Muted>{t('settings.notifyUnavailable')}</Muted> : null}
+      {state === 'denied' ? <Muted>{t('settings.notifyDenied')}</Muted> : null}
+      {state === 'off' ? <Button label={t('settings.notifyEnable')} kind="secondary" busy={busy} onPress={turnOn} /> : null}
+      {state === 'on' ? (
+        <>
+          {toggle('grid', true)}
+          {toggle('offline')}
+          {toggle('lowBattery')}
+          {prefs.lowBattery ? (
+            <View style={{ marginTop: space.md }}>
+              <Slider
+                label={t('settings.notify.threshold')}
+                value={prefs.threshold}
+                min={5}
+                max={50}
+                step={5}
+                format={(value) => `${value}%`}
+                onCommit={(threshold) => change({ threshold })}
+              />
+            </View>
+          ) : null}
+          <Button label={t('settings.notify.test')} kind="secondary" onPress={test} style={{ marginTop: space.md }} />
+          {tested ? <Muted style={{ marginTop: space.sm }}>{tested}</Muted> : null}
+        </>
+      ) : null}
+      {error ? <Muted style={{ marginTop: space.sm, color: theme.yellow }}>{error}</Muted> : null}
+    </Card>
   );
 }
 

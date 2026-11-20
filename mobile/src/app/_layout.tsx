@@ -1,10 +1,13 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, router, type Href } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 
 import { useLanguage } from '@/i18n';
 import { useGridSync } from '@/lib/grid';
+import { usePush } from '@/lib/push';
 import { useSession } from '@/lib/session';
 import { useDeviceSync } from '@/lib/useDeviceSync';
 import { useTheme } from '@/theme';
@@ -26,6 +29,20 @@ export default function RootLayout() {
 
   useDeviceSync();
   useGridSync();
+
+  // A phone with notifications on registers under each new session, in the app's language
+  const language = useLanguage((s) => s.language);
+  useEffect(() => {
+    if (phase === 'signedIn') void usePush.getState().sync();
+  }, [phase, language]);
+
+  // Tapping a notification opens what it is about (the server sends `url`)
+  const tapped = Notifications.useLastNotificationResponse();
+  useEffect(() => {
+    if (Platform.OS === 'web' || phase !== 'signedIn' || !tapped) return;
+    const url = tapped.notification.request.content.data?.url;
+    if (typeof url === 'string' && /^\/(power|device\/[\w%.-]+)?$/.test(url)) router.navigate(url as Href);
+  }, [tapped, phase]);
 
   // The splash screen stays up while the saved session is read
   if (phase === 'restoring') return null;

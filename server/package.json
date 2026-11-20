@@ -15,7 +15,8 @@
     "test:connection": "npm run build && node dist/services/connectionStats.test.js",
     "test:ble": "npm run build && node dist/services/bleBridge.test.js",
     "test:auth": "npm run build && node dist/lib/auth.test.js",
-    "test:access": "npm run build && node dist/services/dataAccess.test.js && node dist/services/mqttQuota.test.js && node dist/services/appChannelProtocol.test.js"
+    "test:access": "npm run build && node dist/services/dataAccess.test.js && node dist/services/mqttQuota.test.js && node dist/services/appChannelProtocol.test.js",
+    "test:push": "npm run build && node dist/lib/push.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",

@@ -9,6 +9,15 @@ import type {
 import type { AutomationRule } from '@panel/types/automation';
 import type { PowerDay, ResilienceSettings, ResilienceStatus } from '@panel/types/resilience';
 
+/** What a phone wants to be notified about; mirrors server/src/lib/pushMessages.ts */
+export interface PushPrefs {
+  grid: boolean;
+  lowBattery: boolean;
+  offline: boolean;
+  /** Battery level, in percent, at or below which "battery low" is sent */
+  threshold: number;
+}
+
 /** A failed request, with the HTTP status when the panel answered (0 = no answer) */
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -149,6 +158,14 @@ export const api = {
     const answer = await call<{ success: boolean; error?: string }>(`/automation/rules/${id}/run`, { method: 'POST', body: { serialNumber } });
     if (!answer.success) throw new ApiError(answer.error ?? 'An action failed', 200);
   },
+
+  // Push notifications (server: routes/push.ts)
+  pushRegister: (token: string, platform: string, language: 'uk' | 'en', prefs: PushPrefs) =>
+    call<{ registered: boolean }>('/push/register', { method: 'POST', body: { token, platform, language, prefs } }),
+
+  pushUnregister: (token: string) => call<{ registered: boolean }>('/push/unregister', { method: 'POST', body: { token } }),
+
+  pushTest: (token: string) => call<{ sent: boolean }>('/push/test', { method: 'POST', body: { token } }),
 
   resilienceStatus: () => unwrap(call<Wrapped<ResilienceStatus>>('/resilience/status')),
 

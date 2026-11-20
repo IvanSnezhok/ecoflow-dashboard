@@ -36,6 +36,8 @@ import bleRouter from "./routes/ble.js";
 import appAccountRouter from "./routes/appAccount.js";
 import authRouter from "./routes/auth.js";
 import usersRouter from "./routes/users.js";
+import pushRouter from "./routes/push.js";
+import { pushService } from "./services/pushService.js";
 import { panelAuth } from "./services/panelAuth.js";
 import { canAccessDevice } from "./lib/permissions.js";
 import { appChannel } from "./services/appChannel.js";
@@ -141,6 +143,7 @@ app.use("/api/system", panelAuth.requireOwner, systemRouter);
 app.use("/api/ble", panelAuth.requireOwner, bleRouter);
 app.use("/api/app-account", panelAuth.requireOwner, appAccountRouter);
 app.use("/api/users", panelAuth.requireOwner, usersRouter);
+app.use("/api/push", pushRouter);
 
 // Serve static files from the frontend build
 const frontendDistPath = path.join(__dirname, "../../dist");
@@ -302,6 +305,8 @@ server.listen(PORT, async () => {
         const known = getDeviceBySn(device.sn) as { id: number } | undefined;
         // The cloud's own flag: `online` is also true while BLE alone carries the data.
         if (known) recordConnectionState(known.id, (device.cloudOnline ?? device.online) === 1);
+        // Phones with notifications on hear about a station that stays unreachable
+        if (device.online !== 1) pushService.observeDevice(device.sn, device.deviceName || device.sn, false, null);
 
         if (device.online === 1) {
           try {
@@ -337,6 +342,7 @@ server.listen(PORT, async () => {
                 device.online === 1,
                 q,
               );
+              pushService.observeDevice(device.sn, device.deviceName || device.sn, true, metrics.soc);
               await processDeviceAutomation(metrics);
               await processResilienceAutomation(metrics, q);
             } catch (automationErr) {

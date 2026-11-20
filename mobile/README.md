@@ -64,3 +64,14 @@ npx expo export --platform ios --platform android   # bundles without a native b
   resolve their packages from `mobile/node_modules` only.
 - Server side: `client: "app"` in a sign-in request returns the session id as `token`
   instead of a cookie (`server/src/services/panelAuth.ts`, `lib/cookies.ts`).
+
+## Notifications
+
+Settings → Notifications registers the phone with the panel: power lost and restored, station offline, battery below a level you choose. The panel sends them through Expo's push service, so the server needs outbound HTTPS to `exp.host`.
+
+They work only in an installed build, not in the browser preview, and the build needs:
+
+1. `npx eas init` once, which writes the EAS project ID into `app.json` (the push token is issued for that project).
+2. Push credentials: `npx eas credentials` sets up FCM (Android, a Firebase project with `google-services.json`) and the APNs key (iOS, Apple Developer account).
+
+"Send a test notification" in the same card checks the whole path.
