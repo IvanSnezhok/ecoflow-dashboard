@@ -197,6 +197,8 @@ export interface DeviceState {
   extraBattery1?: ExtraBatteryState;
   extraBattery2?: ExtraBatteryState;
   mainBatteryFlow?: PackFlow; // The main pack's own power, when reported
+  /** Main pack health from bmsMaster; a field is absent when the device did not report it */
+  mainBattery?: { cycles?: number; soh?: number; vol?: number }; // vol in mV
   // Charge settings
   maxChgSoc?: number; // Max charge SOC (50-100%)
   minDsgSoc?: number; // Min discharge SOC (0-30%)

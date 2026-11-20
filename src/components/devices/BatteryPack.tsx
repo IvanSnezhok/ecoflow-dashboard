@@ -21,6 +21,8 @@ interface BatteryPackProps {
   mainErrCode?: number
   /** The main pack's own power; the station's total covers every pack */
   mainFlow?: PackFlow
+  /** Main pack health (bmsMaster): charge cycles, state of health in %, voltage in mV */
+  mainHealth?: { cycles?: number; soh?: number; vol?: number }
   mainCapacityWh?: number // Optional main battery capacity, defaults to 3600Wh
   extraBatteryCapacityWh?: number // Optional extra battery capacity, defaults to 3600Wh
   extraBattery1?: ExtraBatteryState | null
@@ -226,6 +228,7 @@ export function BatteryPack({
   mainTemp,
   mainErrCode,
   mainFlow,
+  mainHealth,
   mainCapacityWh = BATTERY_CAPACITY_WH,
   extraBatteryCapacityWh = BATTERY_CAPACITY_WH,
   extraBattery1,
@@ -242,6 +245,9 @@ export function BatteryPack({
       soc: mainSoc,
       isCharging: mainIsCharging,
       temp: mainTemp,
+      cycles: mainHealth?.cycles,
+      soh: mainHealth?.soh,
+      voltage: mainHealth?.vol,
       remainingWh: mainRemainingWh,
       fullCapacityWh: mainCapacityWh,
       errCode: mainErrCode,

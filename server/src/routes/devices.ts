@@ -239,6 +239,12 @@ router.get("/", async (req: Request, res: Response) => {
               extraBattery2: parseExtraBattery("bmsSlave2"),
               // The main pack's own share, next to the station's total in batteryWatts
               mainBatteryFlow: packFlow(q, "bmsMaster", chargeLimits) ?? undefined,
+              // Main pack health; a field the quota lacks (BLE, the MQTT push) stays undefined
+              mainBattery: {
+                cycles: typeof q["bmsMaster.cycles"] === "number" ? (q["bmsMaster.cycles"] as number) : undefined,
+                soh: (q["bmsMaster.soh"] as number) || (q["bmsMaster.cycleSoh"] as number) || undefined,
+                vol: (q["bmsMaster.vol"] as number) || undefined,
+              },
               // Charge settings from device
               maxChgSoc: (q["ems.maxChargeSoc"] as number) || undefined,
               minDsgSoc: (q["ems.minDsgSoc"] as number) || undefined,

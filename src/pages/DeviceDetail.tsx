@@ -211,6 +211,7 @@ export default function DeviceDetail() {
             mainTemp={state.temperature}
             mainErrCode={state.errorCodes?.bmsMasterErrCode}
             mainFlow={state.mainBatteryFlow}
+            mainHealth={state.mainBattery}
             extraBattery1={state.extraBattery1}
             extraBattery2={state.extraBattery2}
             mainCapacityWh={packCapacityWh(device.deviceType)}
