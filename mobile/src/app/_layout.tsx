@@ -3,6 +3,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 
+import { useLanguage } from '@/i18n';
+import { useGridSync } from '@/lib/grid';
 import { useSession } from '@/lib/session';
 import { useDeviceSync } from '@/lib/useDeviceSync';
 import { useTheme } from '@/theme';
@@ -14,7 +16,8 @@ export default function RootLayout() {
   const phase = useSession((s) => s.phase);
 
   useEffect(() => {
-    void useSession.getState().restore();
+    // The language first, so a message from restoring the session is in it
+    void useLanguage.getState().restore().then(() => useSession.getState().restore());
   }, []);
 
   useEffect(() => {
@@ -22,6 +25,7 @@ export default function RootLayout() {
   }, [phase]);
 
   useDeviceSync();
+  useGridSync();
 
   // The splash screen stays up while the saved session is read
   if (phase === 'restoring') return null;

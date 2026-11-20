@@ -4,9 +4,12 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useDeviceStore } from '@panel/stores/deviceStore';
 
 import { DeviceCard } from '@/components/DeviceCard';
+import { GridNow } from '@/components/GridNow';
 import { Screen } from '@/components/Screen';
 import { Button, Notice } from '@/components/ui';
+import { useT } from '@/i18n';
 import { watts } from '@/lib/format';
+import { useGrid } from '@/lib/grid';
 import { useLiveStatus } from '@/lib/live';
 import { refreshDevices } from '@/lib/useDeviceSync';
 import { space, tabular, useTheme } from '@/theme';
@@ -17,11 +20,12 @@ export default function Stations() {
   const loading = useDeviceStore((s) => s.isLoading);
   const error = useDeviceStore((s) => s.error);
   const [refreshing, setRefreshing] = useState(false);
+  const t = useT();
 
   const refresh = async () => {
     setRefreshing(true);
     useDeviceStore.getState().setError(null);
-    await refreshDevices();
+    await Promise.all([refreshDevices(), useGrid.getState().status ? useGrid.getState().refresh() : null]);
     setRefreshing(false);
   };
 
@@ -30,12 +34,13 @@ export default function Stations() {
   const output = online.reduce((sum, device) => sum + device.state!.acOutputWatts + device.state!.dcOutputWatts, 0);
 
   return (
-    <Screen title="Stations" accessory={<LiveDot />} onRefresh={refresh} refreshing={refreshing}>
+    <Screen title={t('home.title')} accessory={<LiveDot />} onRefresh={refresh} refreshing={refreshing}>
+      <GridNow />
       {devices.length > 1 ? (
         <View style={styles.summary}>
-          <Total label="Total in" value={input} color={input > 0 ? theme.green : theme.textMuted} />
-          <Total label="Total out" value={output} color={output > 0 ? theme.blue : theme.textMuted} />
-          <Total label="Online" value={`${devices.filter((device) => device.online).length}/${devices.length}`} color={theme.text} />
+          <Total label={t('home.totalIn')} value={input} color={input > 0 ? theme.green : theme.textMuted} />
+          <Total label={t('home.totalOut')} value={output} color={output > 0 ? theme.blue : theme.textMuted} />
+          <Total label={t('home.online')} value={`${devices.filter((device) => device.online).length}/${devices.length}`} color={theme.text} />
         </View>
       ) : null}
 
@@ -45,13 +50,13 @@ export default function Stations() {
       {devices.length === 0 && error ? (
         <Notice
           tone="error"
-          title="Could not load your stations"
+          title={t('home.loadFailed')}
           detail={error}
-          action={<Button label="Try again" kind="secondary" onPress={refresh} style={{ marginTop: space.md, alignSelf: 'stretch' }} />}
+          action={<Button label={t('common.retry')} kind="secondary" onPress={refresh} style={{ marginTop: space.md, alignSelf: 'stretch' }} />}
         />
       ) : null}
       {devices.length === 0 && !loading && !error ? (
-        <Notice title="No stations yet" detail="Stations linked to the panel's EcoFlow account appear here. Pull down to check again." />
+        <Notice title={t('home.empty')} detail={t('home.emptyDetail')} />
       ) : null}
     </Screen>
   );
@@ -60,11 +65,12 @@ export default function Stations() {
 /** Whether live updates are flowing from the panel */
 function LiveDot() {
   const theme = useTheme();
+  const t = useT();
   const { connected, mqtt } = useLiveStatus();
   const color = connected ? (mqtt ? theme.green : theme.yellow) : theme.textFaint;
-  const label = connected ? (mqtt ? 'Live' : 'Every 10 s') : 'Reconnecting';
+  const label = t(connected ? (mqtt ? 'home.live' : 'home.polling') : 'home.reconnecting');
   return (
-    <View accessibilityLabel={`Connection: ${label}`} style={styles.live}>
+    <View accessibilityLabel={label} style={styles.live}>
       <View style={[styles.dot, { backgroundColor: color }]} />
       <Text style={[styles.liveText, { color: theme.textMuted }]}>{label}</Text>
     </View>

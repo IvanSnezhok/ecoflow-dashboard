@@ -6,7 +6,8 @@ import type {
   DeviceWithState,
   HistoryResponse,
 } from '@panel/types/device';
-import type { PowerDay, ResilienceStatus } from '@panel/types/resilience';
+import type { AutomationRule } from '@panel/types/automation';
+import type { PowerDay, ResilienceSettings, ResilienceStatus } from '@panel/types/resilience';
 
 /** A failed request, with the HTTP status when the panel answered (0 = no answer) */
 export class ApiError extends Error {
@@ -130,6 +131,24 @@ export const api = {
 
   setChargingPower: (serialNumber: string, watts: number) =>
     call<unknown>(`/devices/${sn(serialNumber)}/charging-power`, { method: 'POST', body: { watts } }),
+
+  /** A custom window; the panel picks the bucket size (1 h up to 120 days, then 6 h) */
+  historyRange: (serialNumber: string, from: string, to: string) =>
+    call<HistoryResponse>(`/devices/${sn(serialNumber)}/history`, { query: { period: 'custom', from, to } }),
+
+  resilienceSettings: () => unwrap(call<Wrapped<ResilienceSettings | null>>('/resilience/settings')),
+
+  // Automation rules (owner only)
+  rules: () => unwrap(call<Wrapped<AutomationRule[]>>('/automation/rules')),
+
+  toggleRule: (id: number, enabled: boolean) =>
+    unwrap(call<Wrapped<AutomationRule>>(`/automation/rules/${id}/toggle`, { method: 'POST', body: { enabled } })),
+
+  /** Carries out the rule's actions once, now */
+  runRule: async (id: number, serialNumber?: string) => {
+    const answer = await call<{ success: boolean; error?: string }>(`/automation/rules/${id}/run`, { method: 'POST', body: { serialNumber } });
+    if (!answer.success) throw new ApiError(answer.error ?? 'An action failed', 200);
+  },
 
   resilienceStatus: () => unwrap(call<Wrapped<ResilienceStatus>>('/resilience/status')),
 

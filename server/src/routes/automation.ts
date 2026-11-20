@@ -15,6 +15,7 @@ import {
   getSlackSettings,
   upsertSlackSettings,
   getDeviceBySn,
+  getDeviceById,
 } from '../db/database.js'
 import type {
   CreateAutomationRuleDto,
@@ -30,7 +31,7 @@ import type {
   AutomationLogRow,
 } from '../types/automation.js'
 import { validateConditions } from '../services/conditionEvaluator.js'
-import { validateActions } from '../services/actionExecutor.js'
+import { validateActions, executeActions } from '../services/actionExecutor.js'
 import { testRule, buildDeviceMetrics, clearRuleCooldown, getRuleCooldownStatus } from '../services/automationEngine.js'
 import { testSlackConnection, parseSlackCommand, getSlackHelpMessage } from '../services/slackService.js'
 import { ecoflowApi } from '../services/ecoflowApi.js'
@@ -338,6 +339,37 @@ automationRouter.post('/rules/:id/test', async (req: Request, res: Response) => 
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
     })
+  }
+})
+
+// POST /api/automation/rules/:id/run - Carry out a rule's actions once, now, whatever
+// its conditions say (the phone app's "Run now"). Cooldown and counters are untouched.
+automationRouter.post('/rules/:id/run', async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10)
+    const row = isNaN(id) ? undefined : getAutomationRuleById(id)
+    if (!row) {
+      res.status(404).json({ success: false, error: 'Rule not found' })
+      return
+    }
+    const rule = rowToRule(row)
+    const { serialNumber } = (req.body ?? {}) as { serialNumber?: string }
+    // A rule tied to a device runs on it; a rule for every device needs one named
+    const device = (rule.deviceId
+      ? getDeviceById(rule.deviceId)
+      : serialNumber ? getDeviceBySn(serialNumber) : undefined) as { id: number; serial_number: string; online: number } | undefined
+    if (!device) {
+      res.status(rule.deviceId ? 404 : 400).json({ success: false, error: rule.deviceId ? 'Device not found' : 'Serial number is required' })
+      return
+    }
+    const quota = await ecoflowApi.getDeviceQuota(device.serial_number)
+    const metrics = buildDeviceMetrics(device.id, device.serial_number, device.online === 1, quota as Record<string, unknown>)
+    const results = await executeActions(rule.actions, metrics, `${rule.name} (run from the app by ${req.panelUser?.username ?? 'owner'})`)
+    const failed = results.find((result) => !result.success)
+    res.json({ success: !failed, data: { results }, ...(failed ? { error: failed.error ?? 'An action failed' } : {}) })
+  } catch (error) {
+    console.error('[AutomationRoutes] Error running rule:', error)
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' })
   }
 })
 

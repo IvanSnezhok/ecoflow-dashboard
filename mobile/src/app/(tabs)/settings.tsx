@@ -1,25 +1,28 @@
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
-import { Alert, Platform } from 'react-native';
+import { Alert, Platform, Pressable, Text, View } from 'react-native';
 
-import type { AuthSession, PanelRole } from '@panel/types/device';
+import type { AuthSession } from '@panel/types/device';
 
 import { Screen } from '@/components/Screen';
 import { Button, Card, CardTitle, Muted, Row } from '@/components/ui';
+import { useLanguage, useT, type Key, type LanguageChoice } from '@/i18n';
 import { api } from '@/lib/api';
 import { ago } from '@/lib/format';
 import { useLiveStatus } from '@/lib/live';
 import { useAccess, useSession } from '@/lib/session';
 import { space, useTheme } from '@/theme';
 
-const ROLE: Record<PanelRole, { label: string; note: string }> = {
-  owner: { label: 'Owner', note: 'You manage the panel. Users, automation and panel settings are in the panel in a browser.' },
-  operator: { label: 'Operator', note: 'You see the stations you were given and control them.' },
-  viewer: { label: 'Viewer', note: 'You see the stations you were given. Controls are view only.' },
-};
+const LANGUAGES: { key: LanguageChoice; label: string | null }[] = [
+  { key: 'auto', label: null },
+  { key: 'uk', label: 'Українська' },
+  { key: 'en', label: 'English' },
+];
 
 export default function Settings() {
   const theme = useTheme();
+  const t = useT();
+  const choice = useLanguage((s) => s.choice);
   const { username, role } = useAccess();
   const serverUrl = useSession((s) => s.serverUrl);
   const { connected, mqtt } = useLiveStatus();
@@ -41,44 +44,65 @@ export default function Settings() {
       void signOut();
       return;
     }
-    Alert.alert('Sign out?', 'You will need your password and a code from your authenticator app to sign in again.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+    Alert.alert(t('settings.signOutTitle'), t('settings.signOutDetail'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('settings.signOut'), style: 'destructive', onPress: () => void signOut() },
     ]);
   };
 
   const current = sessions?.find((session) => session.current);
 
   return (
-    <Screen title="Settings">
+    <Screen title={t('tab.settings')}>
       <Card>
-        <CardTitle>Account</CardTitle>
-        <Row first label="Signed in as" value={username ?? '—'} />
-        <Row label="Role" value={role ? ROLE[role].label : '—'} />
-        {role ? <Muted style={{ marginTop: space.sm }}>{ROLE[role].note}</Muted> : null}
+        <CardTitle>{t('settings.account')}</CardTitle>
+        <Row first label={t('settings.signedInAs')} value={username ?? '—'} />
+        <Row label={t('settings.role')} value={role ? t(`settings.role.${role}` as Key) : '—'} />
+        {role ? <Muted style={{ marginTop: space.sm }}>{t(`settings.note.${role}` as Key)}</Muted> : null}
       </Card>
 
       <Card>
-        <CardTitle>Panel</CardTitle>
-        <Row first label="Address" value={serverUrl?.replace(/^https?:\/\//, '') ?? '—'} />
-        <Row label="Connection" value={connected ? 'Connected' : 'Reconnecting…'} valueColor={connected ? theme.green : theme.yellow} />
-        <Row label="EcoFlow live feed" value={!connected ? '—' : mqtt ? 'Live' : 'Down, polling every 10 s'} valueColor={connected && mqtt ? theme.green : theme.textMuted} />
-        {current ? <Row label="This session expires" value={expiry(current.expiresAt)} /> : null}
-        {sessions && sessions.length > 1 ? <Row label="Other sessions" value={sessions.length - 1} /> : null}
+        <CardTitle>{t('settings.panel')}</CardTitle>
+        <Row first label={t('settings.address')} value={serverUrl?.replace(/^https?:\/\//, '') ?? '—'} />
+        <Row label={t('settings.connection')} value={t(connected ? 'settings.connected' : 'settings.reconnecting')} valueColor={connected ? theme.green : theme.yellow} />
+        <Row label={t('settings.feed')} value={!connected ? '—' : t(mqtt ? 'home.live' : 'settings.feedDown')} valueColor={connected && mqtt ? theme.green : theme.textMuted} />
+        {current ? <Row label={t('settings.expires')} value={expiry(current.expiresAt, t)} /> : null}
+        {sessions && sessions.length > 1 ? <Row label={t('settings.otherSessions')} value={sessions.length - 1} /> : null}
         <Muted style={{ marginTop: space.sm }}>
-          History is recorded by the panel around the clock; the app shows it and does not need to stay open.
+          {t('settings.historyNote')}
         </Muted>
       </Card>
 
-      <Button label="Sign out" kind="danger" onPress={confirmSignOut} busy={leaving} />
+      <Card>
+        <CardTitle>{t('settings.language')}</CardTitle>
+        <View accessibilityRole="tablist" style={{ flexDirection: 'row', backgroundColor: theme.raised, borderRadius: 10, padding: 3 }}>
+          {LANGUAGES.map((language) => {
+            const selected = language.key === choice;
+            return (
+              <Pressable
+                key={language.key}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                onPress={() => useLanguage.getState().setChoice(language.key)}
+                style={[{ flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 8 }, selected && { backgroundColor: theme.card }]}>
+                <Text style={{ color: selected ? theme.text : theme.textMuted, fontSize: 14, fontWeight: selected ? '600' : '500' }}>
+                  {language.label ?? t('settings.lang.auto')}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </Card>
+
+      <Button label={t('settings.signOut')} kind="danger" onPress={confirmSignOut} busy={leaving} />
       <Muted style={{ textAlign: 'center' }}>
-        EcoFlow Panel {Constants.expoConfig?.version ?? ''}{current ? `  ·  signed in ${ago(current.createdAt)}` : ''}
+        EcoFlow Panel {Constants.expoConfig?.version ?? ''}{current ? `  ·  ${ago(current.createdAt)}` : ''}
       </Muted>
     </Screen>
   );
 }
 
-function expiry(iso: string): string {
+function expiry(iso: string, t: ReturnType<typeof useT>): string {
   const days = Math.round((new Date(iso).getTime() - Date.now()) / 86_400_000);
-  return days >= 2 ? `in ${days} days` : days === 1 ? 'tomorrow' : 'today';
+  return days >= 2 ? t('settings.inDays', { n: days }) : t(days === 1 ? 'settings.tomorrow' : 'settings.today');
 }

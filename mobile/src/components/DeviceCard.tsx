@@ -3,8 +3,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { DeviceWithState } from '@panel/types/device';
 
+import { useT } from '@/i18n';
 import { deviceView } from '@/lib/deviceView';
-import { ago, watts } from '@/lib/format';
+import { watts } from '@/lib/format';
 import { radius, socColor, space, tabular, useTheme } from '@/theme';
 
 import { Icon } from './Icon';
@@ -14,7 +15,10 @@ import { Chip } from './ui';
 /** One station on the list: level, what it is doing, power in and out */
 export function DeviceCard({ device }: { device: DeviceWithState }) {
   const theme = useTheme();
+  const t = useT();
   const view = deviceView(device, theme);
+  // The panel's lastSeen is the time of its own read, so an offline station shows no time
+  const lastSeen = t('status.offlineNote');
   const state = device.state;
   const dimmed = !device.online || !state;
 
@@ -41,14 +45,14 @@ export function DeviceCard({ device }: { device: DeviceWithState }) {
                 <Text style={styles.percent}>%</Text>
               </Text>
               <View style={styles.flows}>
-                <Flow label="In" value={view.input} color={theme.green} unknown={state.acInputReported === false && state.solarInputWatts === 0} />
-                <Flow label="Out" value={view.output} color={theme.blue} />
+                <Flow label={t('home.in')} value={view.input} color={theme.green} unknown={state.acInputReported === false && state.solarInputWatts === 0} />
+                <Flow label={t('home.out')} value={view.output} color={theme.blue} />
               </View>
             </View>
             <SocBar soc={state.batterySoc} min={state.minDsgSoc} max={state.maxChgSoc} muted={dimmed} />
             <View style={styles.bottom}>
               <Text style={[styles.foot, tabular, { color: theme.textMuted }]}>
-                {device.online ? view.remaining ?? (view.status === 'bypass' ? 'Grid feeds the outputs' : 'Idle') : `Last seen ${ago(device.lastSeen) ?? 'unknown'}`}
+                {device.online ? view.remaining ?? t(view.status === 'bypass' ? 'status.gridFeeds' : 'status.idle') : lastSeen}
               </Text>
               {view.source ? <Text style={[styles.source, { color: theme.textFaint }]}>{view.source.label}</Text> : null}
             </View>
@@ -56,8 +60,8 @@ export function DeviceCard({ device }: { device: DeviceWithState }) {
         ) : (
           <Text style={[styles.foot, { color: theme.textMuted, marginTop: space.md }]}>
             {device.quotaError
-              ? `EcoFlow refuses this device's data (${device.quotaError})`
-              : device.online ? 'Waiting for data' : `Last seen ${ago(device.lastSeen) ?? 'unknown'}`}
+              ? t('home.refused', { error: device.quotaError })
+              : device.online ? t('home.waiting') : lastSeen}
           </Text>
         )}
       </Pressable>

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/Icon';
 import { Button } from '@/components/ui';
+import { useT } from '@/i18n';
 import { errorMessage } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { radius, space, tint, useTheme } from '@/theme';
@@ -13,6 +14,7 @@ type InputRef = ComponentRef<typeof TextInput>;
 export default function SignIn() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const t = useT();
   const savedServer = useSession((s) => s.serverUrl);
   const savedUsername = useSession((s) => s.username);
   const notice = useSession((s) => s.notice);
@@ -55,14 +57,14 @@ export default function SignIn() {
           </View>
           <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>EcoFlow Panel</Text>
           <Text style={[styles.lead, { color: theme.textMuted }]}>
-            Sign in with your panel account. The app talks only to your own panel.
+            {t('signin.lead')}
           </Text>
 
           {notice && !error ? <Banner text={notice} color={theme.yellow} /> : null}
           {error ? <Banner text={error} color={theme.red} /> : null}
 
           <Field
-            label="Panel address"
+            label={t('signin.address')}
             value={server}
             onChangeText={setServer}
             placeholder="panel.example.com"
@@ -75,7 +77,7 @@ export default function SignIn() {
           />
           <Field
             ref={usernameInput}
-            label="Username"
+            label={t('signin.username')}
             value={username}
             onChangeText={setUsername}
             textContentType="username"
@@ -87,7 +89,7 @@ export default function SignIn() {
           />
           <Field
             ref={passwordInput}
-            label="Password"
+            label={t('signin.password')}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -98,7 +100,7 @@ export default function SignIn() {
           />
           <Field
             ref={otpInput}
-            label="Code from your authenticator app"
+            label={t('signin.code')}
             value={otp}
             onChangeText={(text) => setOtp(text.replace(/[^\d\s]/g, '').slice(0, 7))}
             placeholder="000000"
@@ -110,9 +112,9 @@ export default function SignIn() {
             style={{ letterSpacing: 4, fontVariant: ['tabular-nums'] }}
           />
 
-          <Button label="Sign in" onPress={submit} busy={busy} disabled={!ready} style={{ marginTop: space.sm }} />
+          <Button label={t('signin.submit')} onPress={submit} busy={busy} disabled={!ready} style={{ marginTop: space.sm }} />
           <Text style={[styles.hint, { color: theme.textFaint }]}>
-            New accounts and invitations are set up in the panel in a browser.
+            {t('signin.hint')}
           </Text>
         </View>
       </ScrollView>

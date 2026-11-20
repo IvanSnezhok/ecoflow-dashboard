@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { useDeviceStore } from '@panel/stores/deviceStore';
 import type { AuthStatus } from '@panel/types/device';
 
+import { tNow } from '@/i18n';
+
 import { ApiError, api, setConnection } from './api';
 import { normalizeServerUrl } from './serverUrl';
 import { readItem, writeItem } from './storage';
@@ -61,7 +63,7 @@ export const useSession = create<SessionStore>((set, get) => {
       try {
         const status = await api.authStatus(serverUrl, token);
         if (status.authenticated && !status.mustChange) open(serverUrl, token, status);
-        else close('Your session ended. Sign in again.');
+        else close(tNow('signin.ended'));
       } catch {
         // The panel is unreachable right now: keep the session and show the app with
         // what it can load later, instead of asking for a password during an outage
@@ -74,7 +76,7 @@ export const useSession = create<SessionStore>((set, get) => {
 
     signIn: async (server, username, password, otp) => {
       const serverUrl = normalizeServerUrl(server);
-      if (!serverUrl) throw new Error('Enter the panel address, for example panel.example.com');
+      if (!serverUrl) throw new Error(tNow('signin.badAddress'));
       const name = username.trim();
 
       let probe: AuthStatus;
@@ -84,14 +86,14 @@ export const useSession = create<SessionStore>((set, get) => {
         if (error instanceof ApiError && error.status === 0) throw new Error(`${error.message} at ${serverUrl}`);
         throw error;
       }
-      if (!probe.configured) throw new Error('This panel has no login yet. Finish its setup in a browser first.');
+      if (!probe.configured) throw new Error(tNow('signin.noLogin'));
 
       const answer = await api.signIn(serverUrl, name, password, otp.replace(/\s+/g, ''));
       const { token, ...status } = answer;
-      if (!token) throw new Error('This panel is older than the app. Update the panel, then sign in again.');
+      if (!token) throw new Error(tNow('signin.oldPanel'));
       if (status.mustChange) {
         void api.authStatus(serverUrl, token).catch(() => undefined);
-        throw new Error('This is the initial account. Open the panel in a browser and replace it first.');
+        throw new Error(tNow('signin.initial'));
       }
       await Promise.all([writeItem(KEY_SERVER, serverUrl), writeItem(KEY_TOKEN, token), writeItem(KEY_USERNAME, name)]);
       set({ username: name });
@@ -105,7 +107,7 @@ export const useSession = create<SessionStore>((set, get) => {
     },
 
     expire: () => {
-      if (get().phase === 'signedIn') close('Your session ended. Sign in again.');
+      if (get().phase === 'signedIn') close(tNow('signin.ended'));
     },
 
     refreshStatus: async () => {

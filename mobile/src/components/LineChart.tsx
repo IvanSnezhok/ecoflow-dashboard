@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 
+import { useT } from '@/i18n';
 import { clock, dayMonth } from '@/lib/format';
 import { tabular, tint, useTheme } from '@/theme';
 
@@ -57,6 +58,7 @@ function nearestIndex(times: number[], time: number): number {
  */
 export function LineChart({ times, series, from, to, range, format, height = 170, area }: LineChartProps) {
   const theme = useTheme();
+  const t = useT();
   const [width, setWidth] = useState(0);
   const [scrub, setScrub] = useState<number | null>(null);
 
@@ -134,7 +136,7 @@ export function LineChart({ times, series, from, to, range, format, height = 170
             </View>
           );
         })}
-        <Text style={[styles.stamp, tabular, { color: theme.textFaint }]}>{scrub !== null ? stamp(times[scrub]) : 'now'}</Text>
+        <Text style={[styles.stamp, tabular, { color: theme.textFaint }]}>{scrub !== null ? stamp(times[scrub]) : t('common.now')}</Text>
       </View>
       <View
         onLayout={(event) => setWidth(event.nativeEvent.layout.width)}

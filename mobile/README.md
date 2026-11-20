@@ -7,17 +7,21 @@ battery packs, history charts and the grid/outage status.
 History is recorded by the panel's server around the clock; the app reads it from there,
 so charts are complete even when the phone was off.
 
-## What it covers (stage 1)
+## What it covers
 
 - Sign-in with the panel account: username, password and authenticator code. The session
   token is kept in the device keychain; the password is never stored.
 - Stations list with live updates (the panel's WebSocket) and a 10 s poll.
 - Station page: level, power in/out, AC output switch, charge limits, charging power,
   battery packs, history (1 h, 24 h, 7 d, 30 d), device issues.
-- Grid tab: grid state, battery reserve forecast, outage schedule, last 7 days.
+- Home leads with what is going on now: is there power, how long the battery lasts, the next outage.
+- Power tab: grid state, battery reserve forecast, the outage schedule of your group, the
+  outage automation and automation rules (switch on/off, run now), the last 7 days.
+- Stats tab: hours without power, energy per day and per month, battery cycles and health.
+- Ukrainian and English (follows the phone; can be set in Settings).
 - Roles: a viewer sees the controls disabled; the server refuses the commands anyway.
 
-Account setup, invitations, users, automation rules, logs and panel settings stay in the
+Account setup, invitations, users, editing automation rules, logs and panel settings stay in the
 panel in a browser.
 
 ## Run it
