@@ -47,6 +47,7 @@ export type UpdateStep =
   | 'building_frontend'
   | 'building_backend'
   | 'restarting'
+  | 'starting'
   | 'completed'
   | 'failed';
 

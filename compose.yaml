@@ -1,7 +1,8 @@
 name: ecoflow
 
 # Публікується назовні через ecoflow-cloudflared.service (працює на хості).
-# Порт 3001 лишається тим самим, що слухав systemd-процес до переїзду.
+# Порт 3001 лишається тим самим, що слухав systemd-процес до переїзду; тепер його
+# тримає gateway (nginx), а панель доступна лише йому всередині мережі compose.
 
 services:
   dashboard:
@@ -17,8 +18,8 @@ services:
       NODE_ENV: production
       # BLE-міст нижче; без нього панель працює лише через хмару
       ECOFLOW_BLE_BRIDGE_URL: http://ble-bridge:8765
-    ports:
-      - "127.0.0.1:3001:3001"
+    expose:
+      - "3001"
     volumes:
       # база телеметрії лишається на диску хоста, поза образом
       - ./server/data:/app/server/data
@@ -35,6 +36,31 @@ services:
         max-file: "3"
     stop_grace_period: 20s
     mem_limit: 1g
+
+  # Стоїть перед панеллю: поки її контейнер замінюється (оновлення, перезапуск),
+  # відвідувач бачить сторінку з етапом оновлення (deploy/gateway/updating.html)
+  # замість 502 від Cloudflare. `docker compose up -d` цей контейнер не чіпає,
+  # бо його образ і налаштування при оновленні панелі не змінюються.
+  gateway:
+    image: nginx:1.28-alpine
+    container_name: ecoflow-gateway
+    restart: unless-stopped
+    command: ["nginx", "-c", "/etc/nginx/gateway/nginx.conf", "-g", "daemon off;"]
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # каталог, а не окремі файли: після git reset файли мають нові inode;
+      # сюди ж host-updater.sh пише status.json з етапом оновлення
+      - ./deploy/gateway:/etc/nginx/gateway:ro
+    # Порт 3001 на хості звільняється лише після перестворення панелі
+    depends_on:
+      - dashboard
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    mem_limit: 64m
 
   # Пряме з'єднання з EcoFlow по Bluetooth (BLE-донгл на цьому хості).
   # Говорить із bluetoothd хоста через системний D-Bus, тож не потребує

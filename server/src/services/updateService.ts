@@ -20,7 +20,7 @@ const AGENT_POLL_MS = 1000;
 const AGENT_PICKUP_TIMEOUT_MS = 60 * 1000;
 const AGENT_TOTAL_TIMEOUT_MS = 20 * 60 * 1000;
 
-export type UpdateStep = "idle" | "fetching" | "resetting" | "installing_root" | "installing_server" | "building_frontend" | "building_backend" | "restarting" | "completed" | "failed";
+export type UpdateStep = "idle" | "fetching" | "resetting" | "installing_root" | "installing_server" | "building_frontend" | "building_backend" | "restarting" | "starting" | "completed" | "failed";
 export interface UpdateStatus { step: UpdateStep; progress: number; message: string; error?: string; startedAt?: string; completedAt?: string; targetCommit?: string; }
 
 class UpdateService extends EventEmitter {

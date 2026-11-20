@@ -62,3 +62,7 @@ vite.config.d.ts
 # Python
 __pycache__/
 *.pyc
+
+# Update stage for the gateway's placeholder page, written by deploy/host-updater.sh
+deploy/gateway/status.json
+deploy/gateway/status.json.tmp

@@ -118,6 +118,25 @@ polls — this is what lets the Settings page still report `completed` after the
 container it was talking to has been replaced. It also stamps
 `server/data/version.json` so the container can report its own revision.
 
+### Placeholder page instead of a 502
+
+`compose.yaml` puts a small nginx (`gateway`, config in `deploy/gateway/`) in front of
+the panel: it holds `127.0.0.1:3001`, where the tunnel connects, and passes everything
+to the panel inside the compose network. An update only replaces the panel's
+container, so while that one is down the gateway answers itself: pages get
+`deploy/gateway/updating.html` (status 503), API and `/ws` callers a JSON 503. The page
+shows the update's stage (download, dependencies, build, container, start), read from
+`/__update/status.json`, and opens the panel again as soon as `/api/health` answers.
+With no update running (a manual restart, a crash) it says the panel is restarting.
+
+`deploy/host-updater.sh` writes that stage to `deploy/gateway/status.json` (git-ignored):
+step, progress, times and the short commit, without the log's messages, since the page
+is served without a sign-in. The updater now reports `completed` only after the new
+container answers `/api/health` (it waits 3 minutes, then reports a failure).
+
+Changing `deploy/gateway/nginx.conf` needs `docker compose exec gateway nginx -s reload`
+(the updater does it); the page itself is read from disk on every request.
+
 **The telemetry database must not be tracked by git.** `git reset --hard` deletes
 tracked files that are absent from the target commit, so a tracked
 `server/data/ecoflow.db` would be destroyed on the first update. The agent checks

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Ecoflow Dashboard</title>
+<!--
+  Shown by the gateway (deploy/gateway/nginx.conf) while the panel does not answer.
+  Follows /__update/status.json, written by deploy/host-updater.sh, and opens the
+  panel again as soon as /api/health answers. Self-contained: no external files.
+-->
+<style>
+  :root {
+    --bg: #f8fafc;
+    --ink: #1e293b;
+    --soft: #64748b;
+    --line: #e2e8f0;
+    --cell: #e2e8f0;
+    --charge: #10b981;
+    --fault: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b1220;
+      --ink: #f1f5f9;
+      --soft: #94a3b8;
+      --line: #1e293b;
+      --cell: #1e293b;
+      --charge: #14d395;
+      --fault: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 24px 20px;
+  }
+  main { width: 100%; max-width: 30rem; }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 1.75rem;
+    line-height: 1.2;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .lead { margin: 0; color: var(--soft); }
+
+  /* The update as a battery charging: one cell per stage */
+  .battery {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 32px 0 12px;
+  }
+  .cells {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+    padding: 4px;
+    border: 2px solid var(--ink);
+    border-radius: 10px;
+  }
+  .cell {
+    height: 34px;
+    border-radius: 4px;
+    background: var(--cell);
+    transition: background-color 0.4s;
+  }
+  .cell.done { background: var(--charge); }
+  .cell.now { background: var(--charge); animation: pulse 1.4s ease-in-out infinite; }
+  .battery.fault .cell.now { background: var(--fault); animation: none; }
+  .cap { width: 6px; height: 16px; border-radius: 0 3px 3px 0; background: var(--ink); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  .readout {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    color: var(--soft);
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  ol {
+    list-style: none;
+    margin: 28px 0 0;
+    padding: 20px 0 0;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 10px;
+  }
+  li { display: flex; align-items: baseline; gap: 12px; color: var(--soft); }
+  li::before {
+    content: "";
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid currentColor;
+    transform: translateY(-1px);
+  }
+  li.done { color: var(--ink); }
+  li.done::before { background: var(--charge); border-color: var(--charge); }
+  li.now { color: var(--ink); font-weight: 600; }
+  li.now::before { border-color: var(--charge); box-shadow: 0 0 0 3px color-mix(in srgb, var(--charge) 25%, transparent); }
+  .fault-text { color: var(--fault); }
+  [hidden] { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cell.now { animation: none; opacity: 0.6; }
+    .cell { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title" aria-live="polite">The panel is restarting</h1>
+  <p class="lead" id="lead">This page opens the panel by itself as soon as it answers.</p>
+
+  <div id="update" hidden>
+    <div class="battery" id="battery" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="title">
+      <div class="cells">
+        <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+      </div>
+      <div class="cap"></div>
+    </div>
+    <div class="readout"><span id="percent"></span><span id="meta"></span></div>
+    <ol id="stages"></ol>
+  </div>
+</main>
+
+<script>
+(function () {
+  var uk = /^(uk|ru|be)/i.test(navigator.language || '');
+  var T = uk ? {
+    updating: 'Панель оновлюється',
+    restarting: 'Панель перезапускається',
+    failed: 'Оновлення не вдалося',
+    lead: 'Сторінка сама відкриє панель, щойно вона відповість.',
+    leadLong: 'Це триває довше, ніж зазвичай. Сторінка й далі чекає на панель.',
+    leadFailed: 'Панель зараз не відповідає. Подробиці є в server/data/update.log на сервері.',
+    stages: ['Завантаження нової версії', 'Встановлення залежностей', 'Збірка', 'Заміна контейнера', 'Запуск панелі'],
+    version: 'версія ',
+    elapsed: function (m, s) { return (m ? m + ' хв ' : '') + s + ' с'; }
+  } : {
+    updating: 'The panel is updating',
+    restarting: 'The panel is restarting',
+    failed: 'The update failed',
+    lead: 'This page opens the panel by itself as soon as it answers.',
+    leadLong: 'This is taking longer than usual. The page keeps waiting for the panel.',
+    leadFailed: 'The panel is not answering. Details are in server/data/update.log on the server.',
+    stages: ['Downloading the new version', 'Installing dependencies', 'Building', 'Replacing the container', 'Starting the panel'],
+    version: 'version ',
+    elapsed: function (m, s) { return (m ? m + ' min ' : '') + s + ' s'; }
+  };
+  document.documentElement.lang = uk ? 'uk' : 'en';
+
+  // Steps of deploy/host-updater.sh → the stage shown here
+  var STAGE = {
+    fetching: 0, resetting: 0,
+    installing_root: 1, installing_server: 1,
+    building_frontend: 2, building_backend: 2,
+    restarting: 3,
+    starting: 4
+    // completed: the update is over, so an outage after it is a plain restart
+  };
+  // A status older than this belongs to an earlier update, not to this outage
+  var FRESH_MS = 30 * 60 * 1000;
+  var LONG_MS = 3 * 60 * 1000;
+  var openedAt = Date.now();
+
+  var $ = function (id) { return document.getElementById(id); };
+  var cells = document.querySelectorAll('.cell');
+  var list = $('stages');
+  T.stages.forEach(function (name) {
+    var li = document.createElement('li');
+    li.textContent = name;
+    list.appendChild(li);
+  });
+  var items = list.children;
+
+  function render(status) {
+    var now = Date.now();
+    var stamp = status && Date.parse(status.updatedAt || status.completedAt || status.startedAt || '');
+    var fresh = status && stamp && now - stamp < FRESH_MS;
+    var failed = fresh && status.step === 'failed';
+    var stage = fresh && !failed ? STAGE[status.step] : undefined;
+    var long = now - openedAt > LONG_MS;
+
+    if (stage === undefined && !failed) {
+      $('update').hidden = true;
+      $('title').textContent = T.restarting;
+      $('title').className = '';
+      $('lead').textContent = long ? T.leadLong : T.lead;
+      return;
+    }
+
+    if (failed) stage = STAGE[status.failedStep] || 0;
+    $('update').hidden = false;
+    $('title').textContent = failed ? T.failed : T.updating;
+    $('title').className = failed ? 'fault-text' : '';
+    $('lead').textContent = failed ? T.leadFailed : long && stage === 4 ? T.leadLong : T.lead;
+    $('battery').className = 'battery' + (failed ? ' fault' : '');
+
+    for (var i = 0; i < cells.length; i++) {
+      var state = i < stage ? 'done' : i === stage ? 'now' : '';
+      cells[i].className = 'cell ' + state;
+      items[i].className = state;
+    }
+    var percent = Math.max(0, Math.min(100, Number(status.progress) || 0));
+    $('battery').setAttribute('aria-valuenow', percent);
+    $('percent').textContent = failed ? '' : percent + '%';
+
+    var meta = [];
+    if (status.targetCommit) meta.push(T.version + status.targetCommit);
+    var started = Date.parse(status.startedAt || '');
+    if (started && !failed) {
+      var seconds = Math.max(0, Math.round((now - started) / 1000));
+      meta.push(T.elapsed(Math.floor(seconds / 60), seconds % 60));
+    }
+    $('meta').textContent = meta.join(', ');
+  }
+
+  var last = null;
+  function readStatus() {
+    return fetch('/__update/status.json?' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) { last = s && typeof s.step === 'string' ? s : null; })
+      .catch(function () { /* keep the last stage on a network hiccup */ });
+  }
+  function panelIsBack() {
+    return fetch('/api/health?' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok; })
+      .catch(function () { return false; });
+  }
+  function tick() {
+    Promise.all([readStatus(), panelIsBack()]).then(function (results) {
+      if (results[1]) { location.reload(); return; }
+      render(last);
+      setTimeout(tick, 2000);
+    });
+  }
+  render(null);
+  tick();
+  setInterval(function () { render(last); }, 1000);
+})();
+</script>
+</body>
+</html>
