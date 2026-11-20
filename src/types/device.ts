@@ -136,6 +136,12 @@ export interface AppChannelStatus {
   };
 }
 
+/** What one battery pack is doing right now */
+export interface PackFlow {
+  watts: number; // Power into the pack: above 0 charging, below 0 discharging, 0 resting
+  remainMinutes: number | null; // To the charge limit or to the discharge limit
+}
+
 export interface ExtraBatteryState {
   soc: number; // State of charge (0-100)
   temp: number; // Temperature in Celsius
@@ -148,6 +154,7 @@ export interface ExtraBatteryState {
   remainCap: number; // Remaining capacity in mAh
   connected: boolean; // Whether the battery is connected
   errCode?: number; // Error code (0 = no error)
+  flow?: PackFlow; // Absent: the device did not report this pack's power
   held?: boolean; // Missing from the latest quota; values are from its last report
   lastUpdated?: string; // ISO time the device last reported this pack
 }
@@ -189,6 +196,7 @@ export interface DeviceState {
   // Extra batteries (for Delta Pro)
   extraBattery1?: ExtraBatteryState;
   extraBattery2?: ExtraBatteryState;
+  mainBatteryFlow?: PackFlow; // The main pack's own power, when reported
   // Charge settings
   maxChgSoc?: number; // Max charge SOC (50-100%)
   minDsgSoc?: number; // Min discharge SOC (0-30%)

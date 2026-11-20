@@ -4,6 +4,7 @@ import {
   ExtraBatteryTracker,
   connectedExtraBatterySocs,
   hasExtraBattery,
+  packFlow,
 } from "./extraBatteries.js";
 
 const SN = "DCEBZ5ZE1234567";
@@ -81,3 +82,26 @@ const plain = new ExtraBatteryTracker();
 assert.deepEqual(connectedExtraBatterySocs(plain.fill(SN, main, t0)), []);
 
 console.log("extraBatteries tests passed");
+
+// Pack power: a DELTA Pro leaves inputWatts/outputWatts at 0, so current x voltage is used.
+const charging = { ...pack("bmsSlave1", 50), "bmsSlave1.inputWatts": 0, "bmsSlave1.outputWatts": 0, "bmsSlave1.amp": 10000 };
+assert.deepEqual(packFlow(charging, "bmsSlave1"), { watts: 520, remainMinutes: 240 });
+assert.deepEqual(packFlow(charging, "bmsSlave1", { maxChargeSoc: 80 }), { watts: 520, remainMinutes: 144 });
+const discharging = { ...pack("bmsSlave1", 50), "bmsSlave1.amp": -8000 };
+assert.deepEqual(packFlow(discharging, "bmsSlave1"), { watts: -416, remainMinutes: 300 });
+assert.deepEqual(packFlow(discharging, "bmsSlave1", { minDischargeSoc: 10 }), { watts: -416, remainMinutes: 240 });
+// Reported watts win over the current; without capacities the time is unknown
+assert.deepEqual(packFlow({ "bmsSlave1.inputWatts": 300, "bmsSlave1.outputWatts": 0 }, "bmsSlave1"), { watts: 300, remainMinutes: null });
+assert.deepEqual(packFlow({ ...pack("bmsSlave1", 50), "bmsSlave1.outputWatts": 260 }, "bmsSlave1"), { watts: -260, remainMinutes: 480 });
+// A resting pack reads a few watts either way
+assert.deepEqual(packFlow({ ...pack("bmsSlave1", 50), "bmsSlave1.amp": -40 }, "bmsSlave1"), { watts: 0, remainMinutes: null });
+// BLE sends only the SOC: the power is unknown, not 0
+assert.equal(packFlow({ "bmsSlave1.soc": 58 }, "bmsSlave1"), null);
+
+// A pack kept from memory does not keep its last power reading.
+const flowing = new ExtraBatteryTracker();
+flowing.fill(SN, { ...main, ...charging }, t0);
+const afterBle = flowing.fill(SN, { ...main, "bmsSlave1.soc": 51 }, t0 + 10_000);
+assert.equal(afterBle["bmsSlave1.fullCap"], 80000);
+assert.equal("bmsSlave1.amp" in afterBle, false);
+assert.equal(packFlow(afterBle, "bmsSlave1"), null);

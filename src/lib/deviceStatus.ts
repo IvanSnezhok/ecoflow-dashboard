@@ -1,4 +1,4 @@
-import type { DeviceState, DeviceWithState } from '@/types/device'
+import type { DeviceState, DeviceWithState, PackFlow } from '@/types/device'
 
 export type PowerStatus = 'charging' | 'discharging' | 'bypass' | 'standby'
 
@@ -30,6 +30,15 @@ export function remainingTime(state: DeviceState, status: PowerStatus): string |
   if (status === 'charging' && state.chgRemainTime && state.chgRemainTime > 0) return `${formatMinutes(state.chgRemainTime)} to full`
   if (status === 'discharging' && state.dsgRemainTime && state.dsgRemainTime > 0) return `${formatMinutes(state.dsgRemainTime)} left`
   return null
+}
+
+/** One pack's share: "Charging" / "Discharging" / "Idle", its watts and the time it has left */
+export function packFlowView(flow: PackFlow): { status: PowerStatus; watts: number; remaining: string | null } {
+  const status: PowerStatus = flow.watts > 0 ? 'charging' : flow.watts < 0 ? 'discharging' : 'standby'
+  const remaining = flow.remainMinutes
+    ? `${formatMinutes(flow.remainMinutes)} ${status === 'charging' ? 'to full' : 'left'}`
+    : null
+  return { status, watts: Math.abs(flow.watts), remaining }
 }
 
 export const socTextColor = (soc: number) =>

@@ -1,9 +1,9 @@
 import { cn } from '@/lib/utils'
-import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle, CheckCircle2, Clock } from 'lucide-react'
-import type { ExtraBatteryState } from '@/types/device'
+import { Battery, Zap, Thermometer, Heart, RefreshCw, AlertTriangle, CheckCircle2, Clock, ArrowDown, ArrowUp, Minus } from 'lucide-react'
+import type { ExtraBatteryState, PackFlow } from '@/types/device'
 import { ErrorTooltip } from '@/components/ui/ErrorTooltip'
 import { getErrorInfo } from '@/utils/errorCodes'
-import { socBgColor, socTextColor } from '@/lib/deviceStatus'
+import { POWER_STATUS, packFlowView, socBgColor, socTextColor } from '@/lib/deviceStatus'
 
 // Capacity of a DELTA Pro and its Smart Extra Battery in Wh
 const BATTERY_CAPACITY_WH = 3600
@@ -19,6 +19,8 @@ interface BatteryPackProps {
   mainTemp?: number
   /** bmsMaster.errCode; status values like 6 (full) show as a green badge */
   mainErrCode?: number
+  /** The main pack's own power; the station's total covers every pack */
+  mainFlow?: PackFlow
   mainCapacityWh?: number // Optional main battery capacity, defaults to 3600Wh
   extraBatteryCapacityWh?: number // Optional extra battery capacity, defaults to 3600Wh
   extraBattery1?: ExtraBatteryState | null
@@ -38,6 +40,8 @@ interface BatteryUnitProps {
   errCode?: number
   errType?: 'bms' | 'battery'
   isMain?: boolean
+  /** This pack's own power; absent when the device does not report it */
+  flow?: PackFlow
   /** ISO time of the pack's last report, shown when the latest quota omitted it */
   heldSince?: string
 }
@@ -65,8 +69,12 @@ function BatteryUnit({
   errCode,
   errType = 'battery',
   isMain = false,
+  flow,
   heldSince,
 }: BatteryUnitProps) {
+  const flowView = flow ? packFlowView(flow) : null
+  const FlowIcon = flowView?.status === 'charging' ? ArrowUp : flowView?.status === 'discharging' ? ArrowDown : Minus
+
   // errCode 6 = fully charged, 23 = charged to the user's limit: status, not an error
   const errInfo = errCode ? getErrorInfo(errType, errCode) : null
   const hasError = errInfo !== null && errInfo.severity !== 'info'
@@ -164,6 +172,20 @@ function BatteryUnit({
         </span>
       </div>
 
+      {/* What this pack is doing: direction, power, time left */}
+      {flowView && (
+        <div className="flex items-center justify-between gap-2 mb-2 text-[11px] font-mono">
+          <span className={cn('inline-flex items-center gap-1 font-semibold', POWER_STATUS[flowView.status].text)}>
+            <FlowIcon className="w-3 h-3" />
+            {flowView.status === 'standby' ? 'Idle' : POWER_STATUS[flowView.status].label}
+            {flowView.status !== 'standby' && (
+              <span className="tabular-nums">{flowView.watts.toLocaleString()} W</span>
+            )}
+          </span>
+          {flowView.remaining && <span className="text-muted-foreground">{flowView.remaining}</span>}
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-4 gap-2 text-[10px]">
         {temp !== undefined && (
@@ -203,6 +225,7 @@ export function BatteryPack({
   mainIsCharging,
   mainTemp,
   mainErrCode,
+  mainFlow,
   mainCapacityWh = BATTERY_CAPACITY_WH,
   extraBatteryCapacityWh = BATTERY_CAPACITY_WH,
   extraBattery1,
@@ -223,12 +246,15 @@ export function BatteryPack({
       fullCapacityWh: mainCapacityWh,
       errCode: mainErrCode,
       errType: 'bms',
-      isMain: true
+      isMain: true,
+      // Alone, the main pack's power is the station's own status shown above
+      flow: extraBattery1 || extraBattery2 ? mainFlow : undefined,
     },
     extraBattery1 && {
       label: 'Extra 1',
       soc: extraBattery1.soc,
-      isCharging: extraBattery1.inputWatts > extraBattery1.outputWatts,
+      isCharging: (extraBattery1.flow?.watts ?? 0) > 0,
+      flow: extraBattery1.flow,
       temp: extraBattery1.temp,
       cycles: extraBattery1.cycles,
       soh: extraBattery1.soh,
@@ -241,7 +267,8 @@ export function BatteryPack({
     extraBattery2 && {
       label: 'Extra 2',
       soc: extraBattery2.soc,
-      isCharging: extraBattery2.inputWatts > extraBattery2.outputWatts,
+      isCharging: (extraBattery2.flow?.watts ?? 0) > 0,
+      flow: extraBattery2.flow,
       temp: extraBattery2.temp,
       cycles: extraBattery2.cycles,
       soh: extraBattery2.soh,

@@ -51,6 +51,64 @@ export function connectedExtraBatterySocs(q: Record<string, unknown>): number[] 
   });
 }
 
+export interface PackFlow {
+  /** Power into the pack in W: above 0 charging, below 0 discharging */
+  watts: number;
+  /** Minutes until the charge limit (charging) or the discharge limit (discharging); null when idle or unknown */
+  remainMinutes: number | null;
+}
+
+/** Below this a pack is resting: its current sensor reads a few watts either way. */
+export const PACK_IDLE_WATTS = 5;
+
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+/**
+ * What one pack (bmsMaster, bmsSlave1, bmsSlave2) is doing. A DELTA Pro leaves the
+ * packs' inputWatts/outputWatts at 0 even while charging at full power, so the power
+ * falls back to the pack's own current and voltage (amp in mA, above 0 = charging;
+ * vol in mV). Null when the quota has neither (BLE sends only a pack's SOC).
+ */
+export function packFlow(
+  q: Record<string, unknown>,
+  prefix: string,
+  limits: { maxChargeSoc?: number; minDischargeSoc?: number } = {},
+): PackFlow | null {
+  const input = q[`${prefix}.inputWatts`];
+  const output = q[`${prefix}.outputWatts`];
+  const amp = q[`${prefix}.amp`];
+  const vol = q[`${prefix}.vol`];
+
+  let watts: number;
+  if ((finite(input) && input > 0) || (finite(output) && output > 0)) {
+    watts = (finite(input) ? input : 0) - (finite(output) ? output : 0);
+  } else if (finite(amp) && positive(vol)) {
+    watts = Math.round((amp * vol) / 1_000_000);
+  } else if (finite(input) || finite(output)) {
+    watts = 0;
+  } else {
+    return null;
+  }
+  if (Math.abs(watts) < PACK_IDLE_WATTS) return { watts: 0, remainMinutes: null };
+
+  // Capacities are in mAh, so the time left follows from the current
+  const fullCap = q[`${prefix}.fullCap`];
+  const remainCap = q[`${prefix}.remainCap`];
+  let remainMinutes: number | null = null;
+  if (positive(fullCap) && finite(remainCap) && positive(vol)) {
+    const milliAmps = Math.abs(finite(amp) && amp !== 0 ? amp : (watts * 1_000_000) / vol);
+    const maxSoc = positive(limits.maxChargeSoc) ? Math.min(limits.maxChargeSoc, 100) : 100;
+    const minSoc = positive(limits.minDischargeSoc) ? Math.min(limits.minDischargeSoc, 100) : 0;
+    const toGo = watts > 0 ? (fullCap * maxSoc) / 100 - remainCap : remainCap - (fullCap * minSoc) / 100;
+    const minutes = Math.round((toGo / milliAmps) * 60);
+    if (minutes > 0 && minutes <= 99 * 60) remainMinutes = minutes;
+  }
+  return { watts, remainMinutes };
+}
+
+/** Readings that say what a pack does right now; never filled in from memory. */
+const LIVE_POWER_FIELDS = new Set(["amp", "inputWatts", "outputWatts"]);
+
 interface PackMemory {
   fields: Record<string, unknown>;
   /** When the device itself last reported the pack */
@@ -103,7 +161,8 @@ export class ExtraBatteryTracker {
       }
       if (result === quota) result = { ...quota };
       for (const [key, value] of Object.entries(memory.fields)) {
-        if (!(key in result)) result[key] = value;
+        // A remembered power reading would show a pack charging long after it stopped
+        if (!(key in result) && !LIVE_POWER_FIELDS.has(key.slice(prefix.length + 1))) result[key] = value;
       }
       if (memory.seenAt !== now) held.add(prefix);
     }

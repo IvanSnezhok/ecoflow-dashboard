@@ -7,7 +7,7 @@ import { isRealErrorCode } from "../lib/errorClassification.js";
 import { extractTechnicalInfo } from "../services/deviceInfo.js";
 import { summarizeConnection } from "../services/connectionStats.js";
 import { bleBridge } from "../services/bleBridge.js";
-import { extraBatteries, extraBatterySoc, hasExtraBattery } from "../services/extraBatteries.js";
+import { extraBatteries, extraBatterySoc, hasExtraBattery, packFlow } from "../services/extraBatteries.js";
 import { isDataAccessCheckRunning, runDataAccessCheck } from "../services/dataAccessProbe.js";
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 import { mqttQuotas } from "../services/mqttQuota.js";
@@ -140,12 +140,17 @@ router.get("/", async (req: Request, res: Response) => {
 
             // Extra battery from the quota. ecoflowApi fills in packs a single
             // answer omits, so `held` marks one shown from its last report.
+            const chargeLimits = {
+              maxChargeSoc: q["ems.maxChargeSoc"] as number | undefined,
+              minDischargeSoc: q["ems.minDsgSoc"] as number | undefined,
+            };
             const parseExtraBattery = (prefix: string) => {
               if (!hasExtraBattery(q, prefix)) return undefined;
               const fullCap = q[`${prefix}.fullCap`] as number | undefined;
               const vol = q[`${prefix}.vol`] as number | undefined;
               const soc = extraBatterySoc(q, prefix);
               const lastSeen = extraBatteries.lastSeen(apiDevice.sn, prefix);
+              const held = extraBatteries.isHeld(apiDevice.sn, prefix);
 
               // Temperature - fallback to minCellTemp if temp is missing
               const temp =
@@ -171,7 +176,9 @@ router.get("/", async (req: Request, res: Response) => {
                 remainCap: (q[`${prefix}.remainCap`] as number) ?? 0,
                 connected: true,
                 errCode: (q[`${prefix}.errCode`] as number) ?? 0,
-                held: extraBatteries.isHeld(apiDevice.sn, prefix),
+                held,
+                // A pack shown from its last report has no current power
+                flow: held ? undefined : packFlow(q, prefix, chargeLimits) ?? undefined,
                 lastUpdated: lastSeen ? new Date(lastSeen).toISOString() : undefined,
               };
             };
@@ -230,6 +237,8 @@ router.get("/", async (req: Request, res: Response) => {
               // Extra batteries (bmsSlave1 and bmsSlave2)
               extraBattery1: parseExtraBattery("bmsSlave1"),
               extraBattery2: parseExtraBattery("bmsSlave2"),
+              // The main pack's own share, next to the station's total in batteryWatts
+              mainBatteryFlow: packFlow(q, "bmsMaster", chargeLimits) ?? undefined,
               // Charge settings from device
               maxChgSoc: (q["ems.maxChargeSoc"] as number) || undefined,
               minDsgSoc: (q["ems.minDsgSoc"] as number) || undefined,

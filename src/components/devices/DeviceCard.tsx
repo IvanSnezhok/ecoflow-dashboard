@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Link } from "react-router-dom";
 import { Plug, Sun, Zap, ArrowRight, Power, Battery } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { POWER_STATUS, dataSourceChip, powerStatus, remainingTime, socBgColor } from "@/lib/deviceStatus";
+import { POWER_STATUS, dataSourceChip, packFlowView, powerStatus, remainingTime, socBgColor, socTextColor } from "@/lib/deviceStatus";
 import type { DeviceWithState } from "@/types/device";
 
 interface DeviceCardProps {
@@ -29,6 +29,11 @@ export const DeviceCard = memo(function DeviceCard({ device }: DeviceCardProps) 
   const soc = state?.batterySoc || 0;
   const remaining = state ? remainingTime(state, status) : null;
   const source = dataSourceChip(device);
+
+  const extraPacks = [
+    { label: "Extra 1", pack: state?.extraBattery1 },
+    { label: "Extra 2", pack: state?.extraBattery2 },
+  ].flatMap(({ label, pack }) => (pack ? [{ label, pack }] : []));
 
   const totalInput = (state?.acInputWatts || 0) + (state?.solarInputWatts || 0);
   const acOutput = state?.acOutputWatts || 0;
@@ -171,6 +176,32 @@ export const DeviceCard = memo(function DeviceCard({ device }: DeviceCardProps) 
               </div>
             </div>
           </div>
+
+          {/* Extra batteries: level and what each one is doing */}
+          {extraPacks.length > 0 && (
+            <div className="px-4 pb-3 space-y-1 text-[10px] font-mono">
+              {extraPacks.map(({ label, pack }) => {
+                const flow = pack.flow ? packFlowView(pack.flow) : null;
+                return (
+                  <div key={label} className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground uppercase tracking-wider">{label}</span>
+                    <span className="flex items-center gap-2">
+                      {flow && (
+                        <span className={cn("tabular-nums", POWER_STATUS[flow.status].text)}>
+                          {flow.status === "standby"
+                            ? "idle"
+                            : `${flow.status === "charging" ? "+" : "−"}${flow.watts} W`}
+                        </span>
+                      )}
+                      <span className={cn("font-semibold tabular-nums w-9 text-right", socTextColor(pack.soc))}>
+                        {pack.soc}%
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* What the battery is doing, and for how long it can */}
           <div className="px-4 py-2.5 border-t border-border/50 flex items-center justify-between gap-2 text-[10px] font-mono">
