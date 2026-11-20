@@ -4,6 +4,8 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/ui": "~58.0.29",
+    "@noble/hashes": "^2.4.0",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~58.0.26",
     "expo-background-task": "~58.0.13",
     "expo-constants": "~58.0.16",
@@ -34,6 +36,7 @@
     "@types/react": "~19.3.0",
     "eslint": "^9.39.5",
     "eslint-config-expo": "^58.0.4",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -41,7 +44,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "tsx scripts/direct.test.ts"
   },
   "private": true
 }

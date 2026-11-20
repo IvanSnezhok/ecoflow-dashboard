@@ -6,6 +6,7 @@ import type { AuthStatus } from '@panel/types/device';
 import { tNow } from '@/i18n';
 
 import { ApiError, api, setConnection } from './api';
+import { direct } from './direct';
 import { usePush } from './push';
 import { normalizeServerUrl } from './serverUrl';
 import { readItem, writeItem } from './storage';
@@ -13,6 +14,8 @@ import { readItem, writeItem } from './storage';
 const KEY_SERVER = 'ecoflow.serverUrl';
 const KEY_TOKEN = 'ecoflow.sessionToken';
 const KEY_USERNAME = 'ecoflow.username';
+// The last answer about the account, so a launch without the panel still knows the role
+const KEY_STATUS = 'ecoflow.authStatus';
 
 interface SessionStore {
   /** restoring: reading the keychain at launch */
@@ -39,9 +42,14 @@ export const useSession = create<SessionStore>((set, get) => {
     set({ phase: 'signedIn', serverUrl, token, status, notice: null });
   };
 
+  const remember = (status: AuthStatus) => void writeItem(KEY_STATUS, JSON.stringify({ ...status, devices: null })).catch(() => undefined);
+
   const close = (notice: string | null) => {
     setConnection(null);
     void writeItem(KEY_TOKEN, null);
+    void writeItem(KEY_STATUS, null);
+    // The EcoFlow keys of the independent mode do not outlive the session
+    void direct.disable();
     useDeviceStore.getState().setDevices([]);
     set({ phase: 'signedOut', token: null, status: null, notice });
   };
@@ -57,20 +65,29 @@ export const useSession = create<SessionStore>((set, get) => {
     restore: async () => {
       const [serverUrl, token, username] = await Promise.all([readItem(KEY_SERVER), readItem(KEY_TOKEN), readItem(KEY_USERNAME)]);
       set({ serverUrl, username });
+      await direct.restore();
       if (!serverUrl || !token) {
         set({ phase: 'signedOut' });
         return;
       }
       try {
         const status = await api.authStatus(serverUrl, token);
-        if (status.authenticated && !status.mustChange) open(serverUrl, token, status);
-        else close(tNow('signin.ended'));
+        if (status.authenticated && !status.mustChange) {
+          remember(status);
+          open(serverUrl, token, status);
+        } else close(tNow('signin.ended'));
       } catch {
+        let last: Partial<AuthStatus> = {};
+        try {
+          last = JSON.parse((await readItem(KEY_STATUS)) ?? '{}') as Partial<AuthStatus>;
+        } catch {
+          // Nothing remembered
+        }
         // The panel is unreachable right now: keep the session and show the app with
         // what it can load later, instead of asking for a password during an outage
         open(serverUrl, token, {
           configured: true, authenticated: true, username, role: null, devices: null,
-          mustChange: false, otpRequired: true, powerReserve: false,
+          mustChange: false, otpRequired: true, powerReserve: false, ...last,
         });
       }
     },
@@ -98,6 +115,7 @@ export const useSession = create<SessionStore>((set, get) => {
       }
       await Promise.all([writeItem(KEY_SERVER, serverUrl), writeItem(KEY_TOKEN, token), writeItem(KEY_USERNAME, name)]);
       set({ username: name });
+      remember(status);
       open(serverUrl, token, status);
     },
 
@@ -119,8 +137,10 @@ export const useSession = create<SessionStore>((set, get) => {
       try {
         const status = await api.authStatus(serverUrl, token);
         if (get().token !== token) return;
-        if (status.authenticated && !status.mustChange) set({ status });
-        else get().expire();
+        if (status.authenticated && !status.mustChange) {
+          remember(status);
+          set({ status });
+        } else get().expire();
       } catch {
         // Unreachable: keep what is known
       }

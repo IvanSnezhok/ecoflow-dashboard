@@ -307,6 +307,44 @@ export function getAllDevices() {
   return db.prepare('SELECT * FROM devices ORDER BY name, serial_number').all()
 }
 
+/** One reading the phone app took straight from the EcoFlow cloud while the panel was down */
+export interface BackfillSample {
+  t: number
+  batterySoc: number | null
+  batteryWatts: number | null
+  acInputWatts: number | null
+  solarInputWatts: number | null
+  acOutputWatts: number | null
+  dcOutputWatts: number | null
+  temperature: number | null
+}
+
+/** A sample is stored only where the panel itself has nothing this close */
+const BACKFILL_GAP_SECONDS = 45
+
+/**
+ * Fills holes in a device's history with the phone's readings. The panel's own samples
+ * always win: a reading within 45 s of a stored one is dropped.
+ */
+export function insertBackfillStates(deviceId: number, samples: BackfillSample[]): number {
+  const stamp = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
+  const near = db.prepare('SELECT 1 FROM device_states WHERE device_id = ? AND timestamp >= ? AND timestamp <= ? LIMIT 1')
+  const insert = db.prepare(`
+    INSERT INTO device_states (device_id, battery_soc, battery_watts, ac_input_watts, solar_input_watts, ac_output_watts, dc_output_watts, temperature, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  let inserted = 0
+  db.transaction(() => {
+    for (const sample of [...samples].sort((a, b) => a.t - b.t)) {
+      const gap = BACKFILL_GAP_SECONDS * 1000
+      if (near.get(deviceId, stamp(sample.t - gap), stamp(sample.t + gap))) continue
+      insert.run(deviceId, sample.batterySoc, sample.batteryWatts, sample.acInputWatts, sample.solarInputWatts, sample.acOutputWatts, sample.dcOutputWatts, sample.temperature, stamp(sample.t))
+      inserted += 1
+    }
+  })()
+  return inserted
+}
+
 // State operations
 export function insertDeviceState(
   deviceId: number,

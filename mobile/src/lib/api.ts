@@ -8,6 +8,10 @@ import type {
 } from '@panel/types/device';
 import type { AutomationRule } from '@panel/types/automation';
 import type { PowerDay, ResilienceSettings, ResilienceStatus } from '@panel/types/resilience';
+import { direct, setBackfillUpload, type DirectSample } from './direct';
+import type { DirectCredentials } from './direct/cloud';
+
+setBackfillUpload((serialNumber, samples) => api.historyBackfill(serialNumber, samples));
 
 /** What a phone wants to be notified about; mirrors server/src/lib/pushMessages.ts */
 export interface PushPrefs {
@@ -130,16 +134,16 @@ export const api = {
   deviceInfo: (serialNumber: string) => call<DeviceTechnicalInfo>(`/devices/${sn(serialNumber)}/info`),
 
   setAcOutput: (serialNumber: string, enabled: boolean) =>
-    call<unknown>(`/devices/${sn(serialNumber)}/ac-output`, { method: 'POST', body: { enabled } }),
+    direct.command(serialNumber, { type: 'setAcOutput', enabled }) ?? call<unknown>(`/devices/${sn(serialNumber)}/ac-output`, { method: 'POST', body: { enabled } }),
 
   setMaxChargeSoc: (serialNumber: string, maxSoc: number) =>
-    call<unknown>(`/devices/${sn(serialNumber)}/max-charge-soc`, { method: 'POST', body: { maxSoc } }),
+    direct.command(serialNumber, { type: 'setMaxChargeSoc', value: maxSoc }) ?? call<unknown>(`/devices/${sn(serialNumber)}/max-charge-soc`, { method: 'POST', body: { maxSoc } }),
 
   setMinDischargeSoc: (serialNumber: string, minSoc: number) =>
-    call<unknown>(`/devices/${sn(serialNumber)}/min-discharge-soc`, { method: 'POST', body: { minSoc } }),
+    direct.command(serialNumber, { type: 'setMinDischargeSoc', value: minSoc }) ?? call<unknown>(`/devices/${sn(serialNumber)}/min-discharge-soc`, { method: 'POST', body: { minSoc } }),
 
   setChargingPower: (serialNumber: string, watts: number) =>
-    call<unknown>(`/devices/${sn(serialNumber)}/charging-power`, { method: 'POST', body: { watts } }),
+    direct.command(serialNumber, { type: 'setAcChargingPower', value: watts }) ?? call<unknown>(`/devices/${sn(serialNumber)}/charging-power`, { method: 'POST', body: { watts } }),
 
   /** A custom window; the panel picks the bucket size (1 h up to 120 days, then 6 h) */
   historyRange: (serialNumber: string, from: string, to: string) =>
@@ -158,6 +162,12 @@ export const api = {
     const answer = await call<{ success: boolean; error?: string }>(`/automation/rules/${id}/run`, { method: 'POST', body: { serialNumber } });
     if (!answer.success) throw new ApiError(answer.error ?? 'An action failed', 200);
   },
+
+  /** Independent mode: the EcoFlow API keys for this phone, after the owner's password */
+  directAccess: (password: string) => call<DirectCredentials>('/app-direct', { method: 'POST', body: { password } }),
+
+  historyBackfill: (serialNumber: string, samples: DirectSample[]) =>
+    call<{ received: number; stored: number }>(`/devices/${sn(serialNumber)}/history/backfill`, { method: 'POST', body: { samples } }),
 
   // Push notifications (server: routes/push.ts)
   pushRegister: (token: string, platform: string, language: 'uk' | 'en', prefs: PushPrefs) =>

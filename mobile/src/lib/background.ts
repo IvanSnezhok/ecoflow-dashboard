@@ -2,8 +2,11 @@ import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
+import { useDeviceStore } from '@panel/stores/deviceStore';
+
 import { useLanguage } from '@/i18n';
 
+import { direct, useDirect } from './direct';
 import { useGrid } from './grid';
 import { useSession } from './session';
 import { refreshDevices } from './useDeviceSync';
@@ -27,6 +30,12 @@ if (Platform.OS !== 'web') {
       const session = useSession.getState();
       if (session.phase === 'signedIn') {
         await Promise.all([refreshDevices(), session.status?.powerReserve ? useGrid.getState().refresh() : null]);
+        // Panel down: one failed request is enough here, the task will not get a second
+        if (useDirect.getState().configured && useDeviceStore.getState().error) {
+          direct.panelFailed();
+          direct.panelFailed();
+          await direct.poll(true);
+        }
       }
       syncStationWidget();
       await syncOutageActivity();

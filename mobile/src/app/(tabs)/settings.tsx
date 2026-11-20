@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
-import { Alert, Platform, Pressable, Switch, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, Switch, Text, TextInput, View } from 'react-native';
 
 import type { AuthSession } from '@panel/types/device';
 
@@ -10,11 +10,12 @@ import { Button, Card, CardTitle, Muted, Row } from '@/components/ui';
 import { useLanguage, useT, type Key, type LanguageChoice } from '@/i18n';
 import { api, errorMessage, type PushPrefs } from '@/lib/api';
 import { ago } from '@/lib/format';
+import { direct, useDirect } from '@/lib/direct';
 import { useLiveStatus } from '@/lib/live';
 import { usePush } from '@/lib/push';
 import { liveActivityEnabled, setLiveActivityEnabled } from '@/lib/widgets';
 import { useAccess, useSession } from '@/lib/session';
-import { space, useTheme } from '@/theme';
+import { radius, space, useTheme } from '@/theme';
 
 const LANGUAGES: { key: LanguageChoice; label: string | null }[] = [
   { key: 'auto', label: null },
@@ -77,6 +78,7 @@ export default function Settings() {
       </Card>
 
       <NotificationsCard />
+      <DirectCard />
       {Platform.OS === 'ios' ? <LiveActivityCard /> : null}
 
       <Card>
@@ -105,6 +107,60 @@ export default function Settings() {
         EcoFlow Panel {Constants.expoConfig?.version ?? ''}{current ? `  ·  ${ago(current.createdAt)}` : ''}
       </Muted>
     </Screen>
+  );
+}
+
+function DirectCard() {
+  const theme = useTheme();
+  const t = useT();
+  const { role } = useAccess();
+  const configured = useDirect((s) => s.configured);
+  const waiting = useDirect((s) => s.waiting);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const turnOn = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await direct.enable(await api.directAccess(password));
+      setPassword('');
+    } catch (failure) {
+      setError(errorMessage(failure));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <Card>
+      <CardTitle>{t('direct.title')}</CardTitle>
+      <Muted>{t('direct.note')}</Muted>
+      {configured ? (
+        <>
+          <Row first label={t('direct.on')} value={<Text style={{ color: theme.green, fontWeight: '600' }}>✓</Text>} />
+          {waiting > 0 ? <Row label={t('direct.waiting')} value={String(waiting)} /> : null}
+          <Button label={t('direct.disable')} kind="secondary" onPress={() => void direct.disable()} style={{ marginTop: space.md }} />
+        </>
+      ) : role === 'owner' ? (
+        <>
+          <TextInput
+            accessibilityLabel={t('direct.password')}
+            placeholder={t('direct.password')}
+            placeholderTextColor={theme.textFaint}
+            secureTextEntry
+            autoCapitalize="none"
+            value={password}
+            onChangeText={setPassword}
+            style={{ marginTop: space.md, borderWidth: 1, borderColor: theme.border, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: 12, color: theme.text, backgroundColor: theme.raised, fontSize: 16 }}
+          />
+          <Button label={t('direct.enable')} kind="secondary" busy={busy} disabled={password.length === 0} onPress={turnOn} style={{ marginTop: space.md }} />
+        </>
+      ) : (
+        <Muted style={{ marginTop: space.sm }}>{t('direct.ownerOnly')}</Muted>
+      )}
+      {error ? <Muted style={{ marginTop: space.sm, color: theme.yellow }}>{error}</Muted> : null}
+    </Card>
   );
 }
 

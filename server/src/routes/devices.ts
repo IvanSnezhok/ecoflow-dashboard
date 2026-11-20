@@ -12,10 +12,12 @@ import { isDataAccessCheckRunning, runDataAccessCheck } from "../services/dataAc
 import { EcoflowApiError } from "../lib/ecoflowApiError.js";
 import { mqttQuotas } from "../services/mqttQuota.js";
 import { appChannel, appQuotas } from "../services/appChannel.js";
+import { z } from "zod";
 import { canAccessDevice, canControl } from "../lib/permissions.js";
 import {
   upsertDevice,
   getDeviceBySn,
+  insertBackfillStates,
   getAllDevices,
   getLatestDeviceState,
   insertDeviceState,
@@ -856,6 +858,36 @@ function calculateTimeRange(period: ChartPeriod): {
 
   return { from: from.toISOString(), to, aggregation };
 }
+
+// The phone app's readings from the time the panel was unreachable (mobile/src/lib/direct.ts).
+// Operators and the owner; samples of the last 7 days, never from the future
+const watts = z.number().finite().min(-20000).max(20000).nullable();
+const backfillSchema = z.object({
+  samples: z.array(z.object({
+    t: z.number().int().positive(),
+    batterySoc: z.number().min(0).max(100).nullable(),
+    batteryWatts: watts, acInputWatts: watts, solarInputWatts: watts, acOutputWatts: watts, dcOutputWatts: watts,
+    temperature: z.number().min(-50).max(150).nullable(),
+  })).min(1).max(2000),
+});
+
+router.post("/:sn/history/backfill", (req: Request, res: Response) => {
+  const parsed = backfillSchema.safeParse(req.body);
+  const device = getDeviceBySn(req.params.sn) as { id: number } | undefined;
+  if (!device) {
+    res.status(404).json({ error: "Device not found" });
+    return;
+  }
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid samples" });
+    return;
+  }
+  const now = Date.now();
+  const samples = parsed.data.samples.filter((sample) => sample.t <= now + 60_000 && sample.t >= now - 7 * 86_400_000);
+  const stored = insertBackfillStates(device.id, samples);
+  insertLog(device.id, "API_CALL", "historyBackfill", JSON.stringify({ received: parsed.data.samples.length, by: actor(req) }), JSON.stringify({ stored }), true, null);
+  res.json({ received: parsed.data.samples.length, stored });
+});
 
 router.get("/:sn/history", async (req: Request, res: Response) => {
   try {

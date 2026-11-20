@@ -36,6 +36,7 @@ import bleRouter from "./routes/ble.js";
 import appAccountRouter from "./routes/appAccount.js";
 import authRouter from "./routes/auth.js";
 import usersRouter from "./routes/users.js";
+import appDirectRouter from "./routes/appDirect.js";
 import pushRouter from "./routes/push.js";
 import { pushService } from "./services/pushService.js";
 import { panelAuth } from "./services/panelAuth.js";
@@ -142,6 +143,7 @@ app.use("/api/automation", panelAuth.requireOwner, automationRouter);
 app.use("/api/system", panelAuth.requireOwner, systemRouter);
 app.use("/api/ble", panelAuth.requireOwner, bleRouter);
 app.use("/api/app-account", panelAuth.requireOwner, appAccountRouter);
+app.use("/api/app-direct", panelAuth.requireOwner, appDirectRouter);
 app.use("/api/users", panelAuth.requireOwner, usersRouter);
 app.use("/api/push", pushRouter);
 

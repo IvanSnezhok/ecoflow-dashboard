@@ -3,7 +3,8 @@ import { AppState } from 'react-native';
 
 import { useDeviceStore } from '@panel/stores/deviceStore';
 
-import { api, errorMessage } from './api';
+import { api, ApiError, errorMessage } from './api';
+import { direct } from './direct';
 import { live } from './live';
 import { useSession } from './session';
 
@@ -23,10 +24,13 @@ export function refreshDevices(): Promise<void> {
     .then((devices) => {
       useDeviceStore.getState().mergeDevicesFromServer(devices);
       loaded = true;
+      void direct.panelAnswered(devices);
     })
     .catch((error) => {
       // A failed poll keeps the last data on screen; only a failed first load is shown
       if (first) useDeviceStore.getState().setError(errorMessage(error));
+      // No path to the panel, or its gateway says it is down: the independent mode's cue
+      if (error instanceof ApiError && [0, 502, 503, 504].includes(error.status)) direct.panelFailed();
     })
     .finally(() => {
       inFlight = null;

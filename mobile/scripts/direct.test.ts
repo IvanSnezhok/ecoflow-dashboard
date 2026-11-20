@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { commandBody, isDeltaPro, quotaToState, signHeaders } from '../src/lib/direct/cloud';
+
+const keys = { accessKey: 'ak', secretKey: 'sk', endpoint: 'https://x' };
+const get = signHeaders(keys, null, 1700000000000, '123456');
+assert.equal(get.sign, createHmac('sha256', 'sk').update('accessKey=ak&nonce=123456&timestamp=1700000000000').digest('hex'));
+const body = commandBody('SN1', { type: 'setAcOutput', enabled: true });
+assert.deepEqual(body, { sn: 'SN1', params: { cmdSet: 32, id: 66, enabled: 1, xboost: 0 } });
+const put = signHeaders(keys, body, 1700000000000, '123456');
+assert.equal(put.sign, createHmac('sha256', 'sk').update('params.cmdSet=32&params.enabled=1&params.id=66&params.xboost=0&sn=SN1&accessKey=ak&nonce=123456&timestamp=1700000000000').digest('hex'));
+assert.deepEqual(commandBody('S', { type: 'setAcChargingPower', value: 800 }).params, { cmdSet: 32, id: 69, slowChgPower: 800 });
+assert.equal(isDeltaPro('DELTA Pro'), true);
+assert.equal(isDeltaPro('DELTA Pro 3'), false);
+assert.equal(isDeltaPro('DELTA Max'), false);
+assert.equal(quotaToState('S', { 'pd.soc': 50 }, 1), null);
+const state = quotaToState('S', { 'pd.soc': 78, 'bmsMaster.soc': 77, 'inv.outputWatts': 412, 'inv.inputWatts': 0, 'pd.wattsInSum': 0, 'pd.wattsOutSum': 412, 'inv.cfgAcEnabled': 1, 'ems.maxChargeSoc': 90, 'ems.minDsgSoc': 10, 'ems.dsgRemainTime': 300 }, 1700000000000)!;
+assert.equal(state.batterySoc, 78); assert.equal(state.batteryWatts, -412); assert.equal(state.acOutEnabled, true);
+assert.equal(state.maxChgSoc, 90); assert.equal(state.dsgRemainTime, 300); assert.equal(state.chgRemainTime, undefined);
+console.log('Direct cloud tests passed');

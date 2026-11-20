@@ -11,6 +11,7 @@ import { useT } from '@/i18n';
 import { watts } from '@/lib/format';
 import { useGrid } from '@/lib/grid';
 import { useLiveStatus } from '@/lib/live';
+import { useDirect } from '@/lib/direct';
 import { refreshDevices } from '@/lib/useDeviceSync';
 import { space, tabular, useTheme } from '@/theme';
 
@@ -19,6 +20,8 @@ export default function Stations() {
   const devices = useDeviceStore((s) => s.devices);
   const loading = useDeviceStore((s) => s.isLoading);
   const error = useDeviceStore((s) => s.error);
+  const directActive = useDirect((s) => s.active);
+  const directError = useDirect((s) => s.error);
   const [refreshing, setRefreshing] = useState(false);
   const t = useT();
 
@@ -35,7 +38,15 @@ export default function Stations() {
 
   return (
     <Screen title={t('home.title')} accessory={<LiveDot />} onRefresh={refresh} refreshing={refreshing}>
-      <GridNow />
+      {directActive ? (
+        <Notice
+          tone={directError ? 'error' : undefined}
+          title={t('direct.banner')}
+          detail={directError ? t('direct.bannerError', { error: directError }) : t('direct.bannerNote')}
+        />
+      ) : null}
+      {/* The grid reading is the panel's: without the panel it would be an old one */}
+      {directActive ? null : <GridNow />}
       {devices.length > 1 ? (
         <View style={styles.summary}>
           <Total label={t('home.totalIn')} value={input} color={input > 0 ? theme.green : theme.textMuted} />

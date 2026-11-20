@@ -353,6 +353,11 @@ class PanelAuth {
     return this.status(req);
   }
 
+  /** Asks for the owner's password again before something sensitive is handed out */
+  async ownerPasswordOk(password: string): Promise<boolean> {
+    return this.account ? verifyPassword(password, this.account.passwordHash) : false;
+  }
+
   logout(req: Request, res: Response): void {
     const id = sessionIdFrom(req.headers, SESSION_COOKIE);
     if (id) db.prepare("DELETE FROM auth_sessions WHERE id_hash = ?").run(hashSessionId(id));
